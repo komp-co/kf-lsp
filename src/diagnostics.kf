@@ -1,0 +1,127 @@
+// A `kflatc serve` check answer, turned into LSP diagnostics grouped by the
+// file they are about.
+
+import alloc.list.*
+import json.reader.*
+import json.writer.*
+
+/// One file's diagnostics, as LSP objects (JSON text).
+pub struct FileDiagnostics {
+    pub val path: String
+    pub var items: List<String>
+}
+
+/// What the compiler reported, as far as the editor needs it.
+struct Reported {
+    val severity: String
+    val code: String
+    val message: String
+    val byte_start: uint64
+    val byte_end: uint64
+    val file: String
+}
+
+/// `null` when `answer` is not a check result: an error answer, say.
+/// `text_of` gives a file's text, from its open buffer or from disk, which
+/// positions are counted in.
+pub fun diagnostics_by_file(answer: str, utf8: bool, text_of: &dyn FileText): List<FileDiagnostics>? {
+    var reader = value_at(answer, "result.diagnostics") ?: return null
+    if !reader.begin_array() { return null }
+    var out = List.new<FileDiagnostics>()
+    while reader.array_has_next() {
+        val reported = read_reported(&var reader)
+        if reported.file.is_empty() { continue }
+        val text = text_of.text_of(reported.file.as_str())
+        val item = lsp_diagnostic(&reported, text.as_str(), utf8)
+        if out.position_of_path(reported.file.as_str()).is_none() {
+            out.push(FileDiagnostics { path: reported.file.clone(), items: List.new<String>() })
+        }
+        val at = out.position_of_path(reported.file.as_str()) ?: 0
+        out[at].items.push(item)
+    }
+    if reader.has_error() { return null }
+    return Option.Some(out)
+}
+
+/// Where a file's text comes from.
+pub trait FileText {
+    fun text_of(path: str): String
+}
+
+fun List<FileDiagnostics>.position_of_path(path: str): uint64? {
+    while i in 0..self.size() {
+        if self[i].path.as_str() == path { return Option.Some(i) }
+    }
+    return null
+}
+
+fun read_reported(reader: &var JsonReader): Reported {
+    var severity = String.from("error")
+    var code = String.from("")
+    var message = String.from("")
+    var byte_start: uint64 = 0
+    var byte_end: uint64 = 0
+    var file = String.from("")
+    if reader.begin_object() {
+        while reader.object_has_next() {
+            val key = reader.read_key()
+            when key.as_str() {
+                "severity" => severity = reader.read_string()
+                "code" => { if !reader.take_null() { code = reader.read_string() } }
+                "message" => message = reader.read_string()
+                "byte_start" => byte_start = reader.read_uint64()
+                "byte_end" => byte_end = reader.read_uint64()
+                "file" => { if !reader.take_null() { file = reader.read_string() } }
+                _ => reader.skip_value()
+            }
+        }
+    }
+    return Reported {
+        severity: severity, code: code, message: message, byte_start: byte_start, byte_end: byte_end, file: file
+    }
+}
+
+fun lsp_diagnostic(reported: &Reported, text: str, utf8: bool): String {
+    val start = position_of(text, reported.byte_start, utf8)
+    val end = position_of(text, reported.byte_end, utf8)
+    var writer = JsonWriter.object()
+    writer.key("range")
+    writer.begin_object()
+    writer.key("start")
+    writer.write_position(&start)
+    writer.key("end")
+    writer.write_position(&end)
+    writer.end_object()
+    writer.field_int64("severity", lsp_severity(reported.severity.as_str()))
+    if !reported.code.is_empty() { writer.field_string("code", reported.code.as_str()) }
+    writer.field_string("source", "kflatc")
+    writer.field_string("message", reported.message.as_str())
+    return writer.finish()
+}
+
+mutating fun JsonWriter.write_position(at: &Position): void {
+    self.begin_object()
+    self.field_uint64("line", at.line)
+    self.field_uint64("character", at.character)
+    self.end_object()
+}
+
+/// LSP numbers severities: 1 error, 2 warning, 3 information.
+fun lsp_severity(name: str): int64 {
+    return when name {
+        "error" => 1
+        "warning" => 2
+        _ => 3
+    }
+}
+
+/// `textDocument/publishDiagnostics` for one file.
+pub fun publish(path: str, items: &List<String>): String {
+    val writer = JsonWriter.object()
+    writer.field_string("uri", path_to_uri(path).as_str())
+    writer.key("diagnostics")
+    writer.begin_array()
+    while item in &items { writer.write_raw(item.as_str()) }
+    writer.end_array()
+    return notification("textDocument/publishDiagnostics", writer.finish().as_str())
+}

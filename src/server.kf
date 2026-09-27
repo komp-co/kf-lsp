@@ -1,0 +1,321 @@
+// The language server's state, and what each message from the editor does
+// to it.
+
+import alloc.list.*
+import json.reader.*
+import json.writer.*
+import std.fs.read_to_string
+import std.process.Command
+import std.time.Instant
+import alloc.path.Path
+
+/// Where the server is in its lifecycle; each allows different requests.
+@derive(Copy, Equal)
+pub enum Phase {
+    Starting
+    Running
+    ShuttingDown
+}
+
+/// How long typing must pause before the crate is checked.
+pub fun debounce(): Duration {
+    return Duration.from_millis(300)
+}
+
+/// What one message produced: messages to send, and once the client says
+/// `exit`, the code to exit with.
+pub struct Outcome {
+    pub var messages: List<String>
+    pub var exit_code: int32?
+}
+
+pub struct Server {
+    pub var phase: Phase
+    var utf8: bool
+    var root: String
+    var komp: String
+    var project: Project?
+    /// `kflatc serve`, once started: empty before, and after it stops.
+    var compiler: List<Compiler>
+    var documents: Documents
+    /// Crates edited since they were last checked.
+    var dirty: List<String>
+    /// When the last edit came in; a check is due `debounce()` after it.
+    var edited_at: Instant?
+    /// Files the editor was last told have diagnostics.
+    var published: List<String>
+}
+
+impl Server {
+    /// `komp` is the command that answers `komp metadata`.
+    pub static fun new(komp: str): Server {
+        return Server {
+            phase: Phase.Starting, utf8: false, root: "", komp: String.from(komp), project: null,
+            compiler: List.new<Compiler>(), documents: Documents.new(), dirty: List.new<String>(), edited_at: null,
+            published: List.new<String>()
+        }
+    }
+
+    pub mutating fun handle(body: str): Outcome {
+        var messages = List.new<String>()
+        val parsed = parse_message(body)
+        if parsed.is_none() {
+            messages.push(error_reply("null", ErrorCode.ParseError, "not a JSON object"))
+            return Outcome { messages: messages, exit_code: null }
+        }
+        val message = parsed ?: return Outcome { messages: messages, exit_code: null }
+        val method = message.method?.clone() ?: String.from("")
+        if method.as_str() == "exit" {
+            val code: int32 = if self.phase == Phase.ShuttingDown { 0 } else { 1 }
+            return Outcome { messages: messages, exit_code: Option.Some(code) }
+        }
+        if method.is_empty() { return Outcome { messages: messages, exit_code: null } }
+        when (message.id) {
+            Some(id) => messages.push(self.answer(id.as_str(), method.as_str(), body))
+            None => self.notified(method.as_str(), body, &var messages)
+        }
+        return Outcome { messages: messages, exit_code: null }
+    }
+
+    mutating fun answer(id: str, method: str, body: str): String {
+        return when (self.phase) {
+            Starting => {
+                if method != "initialize" {
+                    return error_reply(id, ErrorCode.ServerNotInitialized, "the client has not sent initialize")
+                }
+                self.phase = Phase.Running
+                result_reply(id, self.initialize(body).as_str())
+            }
+            Running => {
+                if method == "shutdown" {
+                    self.phase = Phase.ShuttingDown
+                    return result_reply(id, "null")
+                }
+                if method == "initialize" {
+                    return error_reply(id, ErrorCode.InvalidRequest, "initialize was already sent")
+                }
+                error_reply(id, ErrorCode.MethodNotFound, "no handler for ${method}")
+            }
+            ShuttingDown => error_reply(id, ErrorCode.InvalidRequest, "the server is shutting down")
+        }
+    }
+
+    /// Remembers the workspace and the position encoding, and names what
+    /// the server can do.
+    mutating fun initialize(body: str): String {
+        val root_uri = string_at(body, "params.rootUri") ?: ""
+        self.root = uri_to_path(root_uri.as_str()) ?: string_at(body, "params.rootPath") ?: ""
+        val offered = strings_at(body, "params.capabilities.general.positionEncodings")
+        while encoding in &offered {
+            if encoding.as_str() == "utf-8" { self.utf8 = true }
+        }
+        val writer = JsonWriter.object()
+        writer.key("capabilities")
+        writer.begin_object()
+        writer.field_string("positionEncoding", if self.utf8 { "utf-8" } else { "utf-16" })
+        writer.key("textDocumentSync")
+        writer.begin_object()
+        writer.field_bool("openClose", true)
+        writer.field_int64("change", 1)
+        writer.field_raw("save", "{\"includeText\":false}")
+        writer.end_object()
+        writer.end_object()
+        writer.key("serverInfo")
+        writer.begin_object()
+        writer.field_string("name", "kflat-lsp")
+        writer.end_object()
+        return writer.finish()
+    }
+
+    mutating fun notified(method: str, body: str, messages: &var List<String>): void {
+        if self.phase != Phase.Running { return }
+        when method {
+            "textDocument/didOpen" => {
+                val text = string_at(body, "params.textDocument.text") ?: return
+                self.edited(body, text.as_str(), messages)
+            }
+            "textDocument/didChange" => {
+                val text = last_change_text(body) ?: return
+                self.edited(body, text.as_str(), messages)
+            }
+            "textDocument/didClose" => {
+                val uri = string_at(body, "params.textDocument.uri") ?: return
+                val path = self.documents.path_of(uri.as_str()) ?: return
+                self.documents.close(uri.as_str())
+                self.send_to_compiler("unstage", staged_params(path.as_str(), null).as_str(), messages)
+                self.mark_dirty(path.as_str())
+            }
+            _ => {}
+        }
+    }
+
+    /// A document's new text: kept, staged with the compiler, and its crate
+    /// marked for a check once typing pauses.
+    mutating fun edited(body: str, text: str, messages: &var List<String>): void {
+        val uri = string_at(body, "params.textDocument.uri") ?: return
+        val path = uri_to_path(uri.as_str()) ?: return
+        self.documents.open(uri.as_str(), path.as_str(), text)
+        if !self.ensure_compiler(messages) { return }
+        self.send_to_compiler("stage", staged_params(path.as_str(), Option.Some(String.from(text))).as_str(), messages)
+        self.mark_dirty(path.as_str())
+    }
+
+    mutating fun mark_dirty(path: str): void {
+        val project = self.project ?: return
+        val entry = project.crate_for(path) ?: return
+        if !self.dirty.contains(&entry.name) { self.dirty.push(entry.name.clone()) }
+        self.edited_at = Option.Some(Instant.now())
+    }
+
+    /// How long until a check is due; `null` when none is waiting.
+    pub fun wait_time(): Duration? {
+        if self.dirty.is_empty() { return null }
+        val since = self.edited_at?.elapsed() ?: return Option.Some(Duration.zero())
+        if since.as_nanos() >= debounce().as_nanos() { return Option.Some(Duration.zero()) }
+        return Option.Some(Duration.from_nanos(debounce().as_nanos() - since.as_nanos()))
+    }
+
+    /// Checks every dirty crate once its debounce has passed: the messages
+    /// that publish what the checks found.
+    pub mutating fun run_due_checks(): List<String> {
+        var messages = List.new<String>()
+        if !self.check_is_due() { return messages }
+        val names = self.dirty.clone()
+        self.dirty = List.new<String>()
+        val project = self.project?.clone() ?: return messages
+        while name in &names {
+            val entry = project.crate_named(name.as_str()) ?: continue
+            val answer = self.ask_compiler("check", project.check_params(&entry).as_str(), &var messages)
+            val text = answer ?: continue
+            self.publish_answer(&entry, text.as_str(), &var messages)
+        }
+        return messages
+    }
+
+    fun check_is_due(): bool {
+        val wait = self.wait_time()
+        return wait.is_some() && (wait?.as_nanos() ?: 1) == 0
+    }
+
+    mutating fun publish_answer(entry: &CrateEntry, answer: str, messages: &var List<String>): void {
+        val texts = TextSource { documents: self.documents.clone() }
+        val found = diagnostics_by_file(answer, self.utf8, &texts)
+        if found.is_none() {
+            messages.push(log_message(1, "check of ${entry.name} failed: ${answer}"))
+            return
+        }
+        val files = found ?: return
+        var now_published = List.new<String>()
+        val prefix = "${entry.root}/"
+        // Files of this crate that had diagnostics and now have none are
+        // cleared; other crates' files are left as they were.
+        while path in &self.published {
+            if !path.as_str().starts_with(prefix.as_str()) { now_published.push(path.clone()) }
+        }
+        while path in &self.published {
+            if path.as_str().starts_with(prefix.as_str()) && files.position_of_path(path.as_str()).is_none() {
+                messages.push(publish(path.as_str(), &List.new<String>()))
+            }
+        }
+        while file in &files {
+            messages.push(publish(file.path.as_str(), &file.items))
+            now_published.push(file.path.clone())
+        }
+        self.published = now_published
+    }
+
+    /// Starts the compiler on first need: the project from `komp metadata`,
+    /// the dependencies' interfaces from `komp check`, then `kflatc serve`
+    /// with every open document staged. False when it cannot start; the
+    /// next edit tries again.
+    mutating fun ensure_compiler(messages: &var List<String>): bool {
+        if !self.compiler.is_empty() { return true }
+        var failure = String.from("")
+        val loaded = load_project(self.komp.as_str(), self.root.as_str(), &var failure)
+        if loaded.is_none() {
+            messages.push(log_message(1, failure.as_str()))
+            return false
+        }
+        val project = loaded ?: return false
+        self.build_interfaces()
+        val failed = start_compiler(project.kflatc.as_str(), &var self.compiler)
+        if !failed.is_empty() {
+            messages.push(log_message(1, failed.as_str()))
+            return false
+        }
+        messages.push(log_message(3, "checking with ${project.kflatc}"))
+        self.project = Option.Some(project.clone())
+        return true
+    }
+
+    /// `komp check` on the workspace, so every dependency's interface is in
+    /// the target directory. Its own report is not the editor's: that comes
+    /// from `kflatc serve`, which sees unsaved text.
+    fun build_interfaces(): void {
+        var command = Command.new(self.komp.as_str())
+        command.arg("check")
+        command.arg(self.root.as_str())
+        command.stdout_to(Path.new("/dev/null"))
+        val _status = command.status()
+    }
+
+    mutating fun send_to_compiler(method: str, params: str, messages: &var List<String>): void {
+        val _answer = self.ask_compiler(method, params, messages)
+    }
+
+    /// The compiler's answer; `null`, logged, when it has gone, and the next
+    /// edit starts another.
+    mutating fun ask_compiler(method: str, params: str, messages: &var List<String>): String? {
+        if self.compiler.is_empty() { return null }
+        val answer = self.compiler[0].request(method, params)
+        if answer.is_none() {
+            self.compiler = List.new<Compiler>()
+            messages.push(log_message(1, "kflatc serve stopped; it restarts on the next edit"))
+        }
+        return answer
+    }
+}
+
+/// `stage`'s params, or `unstage`'s when there is no text.
+fun staged_params(path: str, text: String?): String {
+    val writer = JsonWriter.object()
+    writer.field_string("path", path)
+    when (text) {
+        Some(content) => writer.field_string("text", content.as_str())
+        None => {}
+    }
+    return writer.finish()
+}
+
+/// The text of a full-document change: the last entry of `contentChanges`.
+fun last_change_text(body: str): String? {
+    var reader = value_at(body, "params.contentChanges") ?: return null
+    if !reader.begin_array() { return null }
+    var text: String? = null
+    while reader.array_has_next() {
+        if !reader.begin_object() { return null }
+        while reader.object_has_next() {
+            val key = reader.read_key()
+            if key.as_str() == "text" { text = Option.Some(reader.read_string()) } else { reader.skip_value() }
+        }
+    }
+    return text
+}
+
+/// Open documents' text, else the file on disk.
+struct TextSource {
+    val documents: Documents
+}
+
+impl FileText for TextSource {
+    fun text_of(path: str): String {
+        when (self.documents.text_at(path)) {
+            Some(text) => return text.clone()
+            None => {}
+        }
+        return when (read_to_string(path)) {
+            Ok(text) => text.clone()
+            Err(_error) => String.from("")
+        }
+    }
+}

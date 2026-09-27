@@ -1,0 +1,62 @@
+// Reading one field deep inside a JSON message, by the dotted keys that
+// lead to it through nested objects: `params.textDocument.uri`.
+
+import alloc.list.*
+import json.reader.*
+
+/// A reader standing at the value `path` leads to; `null` when a key is
+/// missing or a step is not an object.
+pub fun value_at(text: str, path: str): JsonReader? {
+    var reader = JsonReader.new(text)
+    var rest = String.from(path)
+    while true {
+        val dot = rest.index_of(".")
+        val key = when (dot) {
+            Some(at) => rest.substring(0, at)
+            None => rest.clone()
+        }
+        if !reader.find_key(key.as_str()) { return null }
+        when (dot) {
+            Some(at) => rest = rest.substring(at + 1, rest.byte_len())
+            None => return Option.Some(reader)
+        }
+    }
+    return null
+}
+
+pub fun string_at(text: str, path: str): String? {
+    var reader = value_at(text, path) ?: return null
+    if reader.peek_kind() != JsonKind.String { return null }
+    return Option.Some(reader.read_string())
+}
+
+pub fun int_at(text: str, path: str): int64? {
+    var reader = value_at(text, path) ?: return null
+    if reader.peek_kind() != JsonKind.Number { return null }
+    val value = reader.read_int64()
+    if reader.has_error() { return null }
+    return Option.Some(value)
+}
+
+/// Every string in the array `path` leads to; empty when there is none.
+pub fun strings_at(text: str, path: str): List<String> {
+    var out = List.new<String>()
+    var reader = value_at(text, path) ?: return out
+    if !reader.begin_array() { return out }
+    while reader.array_has_next() {
+        if reader.peek_kind() == JsonKind.String { out.push(reader.read_string()) } else { reader.skip_value() }
+    }
+    return out
+}
+
+/// Moves into the object ahead and past its members up to `key`, leaving the
+/// reader at that member's value; false when the object has no such key.
+mutating fun JsonReader.find_key(key: str): bool {
+    if !self.begin_object() { return false }
+    while self.object_has_next() {
+        val name = self.read_key()
+        if name.as_str() == key { return true }
+        self.skip_value()
+    }
+    return false
+}

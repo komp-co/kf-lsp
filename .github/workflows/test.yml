@@ -1,0 +1,34 @@
+name: Test
+
+# The server is built with komp from `development`: it needs `kflatc serve`,
+# which no release has yet. komp sits beside this checkout, where kf.toml's
+# `std` path expects it, with json beside komp at the commit komp pins.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build komp from development
+        run: |
+          git clone -q --depth 1 --branch development https://github.com/komp-co/komp ../komp
+          git clone -q https://github.com/komp-co/json ../json
+          git -C ../json checkout -q --detach "$(cat ../komp/bootstrap/json.rev)"
+          (cd ../komp && sh scripts/refresh-komp.sh)
+          echo "KOMP_BIN=$(cd ../komp && pwd)/.build/komp" >> "$GITHUB_ENV"
+
+      - name: Unit tests
+        run: '"$KOMP_BIN" test .'
+
+      - name: An editor session against the built server
+        run: |
+          "$KOMP_BIN" build .
+          python3 tests/session.py target/kflat/kflat_lsp

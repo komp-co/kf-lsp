@@ -1,0 +1,59 @@
+// The two shapes of a JSON-RPC response.
+
+import json.writer.*
+
+/// JSON-RPC's errors, and the one the language server protocol adds.
+pub enum ErrorCode {
+    ParseError
+    InvalidRequest
+    MethodNotFound
+    ServerNotInitialized
+}
+
+pub fun ErrorCode.number(): int64 {
+    return when (self) {
+        ParseError => -32700
+        InvalidRequest => -32600
+        MethodNotFound => -32601
+        ServerNotInitialized => -32002
+    }
+}
+
+/// `id` and `result` are JSON text.
+pub fun result_reply(id: str, result: str): String {
+    val writer = JsonWriter.object()
+    writer.field_string("jsonrpc", "2.0")
+    writer.field_raw("id", id)
+    writer.field_raw("result", result)
+    return writer.finish()
+}
+
+/// `id` is JSON text: `null` when the request's id could not be read.
+pub fun error_reply(id: str, code: ErrorCode, message: str): String {
+    val writer = JsonWriter.object()
+    writer.field_string("jsonrpc", "2.0")
+    writer.field_raw("id", id)
+    writer.key("error")
+    writer.begin_object()
+    writer.field_int64("code", code.number())
+    writer.field_string("message", message)
+    writer.end_object()
+    return writer.finish()
+}
+
+/// A notification: no id, and nothing comes back. `params` is JSON text.
+pub fun notification(method: str, params: str): String {
+    val writer = JsonWriter.object()
+    writer.field_string("jsonrpc", "2.0")
+    writer.field_string("method", method)
+    writer.field_raw("params", params)
+    return writer.finish()
+}
+
+/// A line in the editor's log; `kind` 1 is an error, 3 information.
+pub fun log_message(kind: int64, message: str): String {
+    val writer = JsonWriter.object()
+    writer.field_int64("type", kind)
+    writer.field_string("message", "kflat-lsp: ${message}")
+    return notification("window/logMessage", writer.finish().as_str())
+}

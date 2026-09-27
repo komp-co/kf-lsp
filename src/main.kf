@@ -1,0 +1,37 @@
+import core.display.print
+import std.env.env_var
+import std.poll.Poll
+import std.reader.Reader
+import std.stream.Stream
+
+/// Serves one editor over stdin and stdout until it says `exit`.
+/// `KOMP_BIN` names the komp to ask about the project; `komp` on `PATH`
+/// otherwise.
+fun main(): int32 {
+    val komp = env_var("KOMP_BIN") ?: String.from("komp")
+    var server = Server.new(komp.as_str())
+    var input = Reader.new(Stream.stdin())
+    var framer = Framer.new()
+    var poll = Poll.new()
+    poll.add(input.stream(), 0)
+    while true {
+        while true {
+            val body = framer.take(&var input) ?: break
+            val outcome = server.handle(body.as_str())
+            send_all(&outcome.messages)
+            when (outcome.exit_code) {
+                Some(code) => return code
+                None => {}
+            }
+        }
+        send_all(&server.run_due_checks())
+        if input.at_end() { return 1 }
+        val _ready = poll.wait(server.wait_time())
+        val _filled = input.fill()
+    }
+    return 1
+}
+
+fun send_all(messages: &List<String>): void {
+    while message in &messages { print(framed(message.as_str()).as_str()) }
+}
