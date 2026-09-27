@@ -113,6 +113,7 @@ impl Server {
             "textDocument/documentSymbol" => "[]"
             "textDocument/foldingRange" => "[]"
             "textDocument/selectionRange" => "[]"
+            "textDocument/hover" => "null"
             _ => ""
         }
         if empty.is_empty() { return null }
@@ -120,6 +121,9 @@ impl Server {
         val path = uri_to_path(uri.as_str()) ?: return Option.Some(String.from(empty))
         if !self.ensure_compiler(messages) { return Option.Some(String.from(empty)) }
         val text = self.text_for(path.as_str())
+        if method == "textDocument/hover" {
+            return Option.Some(self.hover(body, path.as_str(), text.as_str(), messages))
+        }
         if method == "textDocument/selectionRange" {
             return Option.Some(self.selection_ranges(body, path.as_str(), text.as_str(), messages))
         }
@@ -127,6 +131,18 @@ impl Server {
         val answer = self.ask_compiler(question, staged_params(path.as_str(), null).as_str(), messages) ?: ""
         if question == "symbols" { return Option.Some(lsp_symbols(answer.as_str(), text.as_str(), self.utf8)) }
         return Option.Some(lsp_folding(answer.as_str(), text.as_str(), self.utf8))
+    }
+
+    /// What is under the cursor, from the typed crates around the file.
+    mutating fun hover(body: str, path: str, text: str, messages: &var List<String>): String {
+        val project = self.project?.clone() ?: return String.from("null")
+        val entry = project.crate_for(path) ?: return String.from("null")
+        val line = int_at(body, "params.position.line") ?: 0
+        val character = int_at(body, "params.position.character") ?: 0
+        val offset = offset_of(text, line as uint64, character as uint64, self.utf8)
+        val params = "{\"path\":${path.json_quoted()},\"offset\":${offset},\"crates\":${project.typed_crates(&entry)}}"
+        val answer = self.ask_compiler("hover", params.as_str(), messages) ?: ""
+        return lsp_hover(answer.as_str(), text, self.utf8)
     }
 
     /// One chain per requested position, in the order they came.
@@ -178,6 +194,7 @@ impl Server {
         writer.field_bool("documentSymbolProvider", true)
         writer.field_bool("foldingRangeProvider", true)
         writer.field_bool("selectionRangeProvider", true)
+        writer.field_bool("hoverProvider", true)
         writer.end_object()
         writer.key("serverInfo")
         writer.begin_object()
