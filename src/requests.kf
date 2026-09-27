@@ -1,0 +1,147 @@
+// What the server answers about a document: each request put to the
+// compiler as its question, and the answer turned into LSP's result.
+
+import alloc.list.*
+import json.quote.*
+import json.writer.*
+
+/// The reply to a request about a document; `null` for a method that is
+/// not one. A file the compiler cannot answer about gets an empty result.
+mutating fun Server.request(id: str, method: str, body: str, messages: &var List<String>): String? {
+    val empty = when method {
+        "textDocument/documentSymbol" => "[]"
+        "textDocument/foldingRange" => "[]"
+        "textDocument/selectionRange" => "[]"
+        "textDocument/hover" => "null"
+        "textDocument/definition" => "null"
+        "textDocument/references" => "[]"
+        "textDocument/signatureHelp" => "null"
+        "textDocument/completion" => "[]"
+        "textDocument/inlayHint" => "[]"
+        "textDocument/semanticTokens/full" => "{\"data\":[]}"
+        "textDocument/prepareRename" => "null"
+        "textDocument/rename" => "null"
+        "textDocument/codeAction" => "[]"
+        _ => ""
+    }
+    if empty.is_empty() { return null }
+    val uri = string_at(body, "params.textDocument.uri") ?: return Option.Some(result_reply(id, empty))
+    val path = uri_to_path(uri.as_str()) ?: return Option.Some(result_reply(id, empty))
+    if method == "textDocument/codeAction" {
+        val first = int_at(body, "params.range.start.line") ?: 0
+        val last = int_at(body, "params.range.end.line") ?: first
+        return Option.Some(result_reply(id, lsp_code_actions(&self.fixes, path.as_str(), first as uint64,
+                                                             last as uint64).as_str()))
+    }
+    if !self.ensure_compiler(messages) { return Option.Some(result_reply(id, empty)) }
+    val text = self.text_for(path.as_str())
+    if method == "textDocument/rename" {
+        return Option.Some(self.rename(id, body, path.as_str(), text.as_str(), messages))
+    }
+    val result = when method {
+        "textDocument/documentSymbol" => {
+            val answer = self.ask_compiler("symbols", staged_params(path.as_str(), null).as_str(), messages) ?: ""
+            lsp_symbols(answer.as_str(), text.as_str(), self.utf8)
+        }
+        "textDocument/foldingRange" => {
+            val answer = self.ask_compiler("folding", staged_params(path.as_str(), null).as_str(), messages) ?: ""
+            lsp_folding(answer.as_str(), text.as_str(), self.utf8)
+        }
+        "textDocument/selectionRange" => self.selection_ranges(body, path.as_str(), text.as_str(), messages)
+        "textDocument/hover" => {
+            val answer = self.ask_at("hover", body, path.as_str(), text.as_str(), messages) ?: ""
+            lsp_hover(answer.as_str(), text.as_str(), self.utf8)
+        }
+        "textDocument/definition" => {
+            val answer = self.ask_at("references", body, path.as_str(), text.as_str(), messages) ?: ""
+            lsp_definition(answer.as_str(), &self.file_texts(), self.utf8)
+        }
+        "textDocument/references" => {
+            val answer = self.ask_at("references", body, path.as_str(), text.as_str(), messages) ?: ""
+            val with_declaration = bool_at(body, "params.context.includeDeclaration") ?: false
+            lsp_references(answer.as_str(), with_declaration, &self.file_texts(), self.utf8)
+        }
+        "textDocument/signatureHelp" => {
+            val answer = self.ask_at("signature", body, path.as_str(), text.as_str(), messages) ?: ""
+            lsp_signature_help(answer.as_str())
+        }
+        "textDocument/completion" => {
+            val answer = self.ask_at("completion", body, path.as_str(), text.as_str(), messages) ?: ""
+            lsp_completion(answer.as_str())
+        }
+        "textDocument/inlayHint" => {
+            val answer = self.ask_typed("inlays", path.as_str(), -1, "", messages) ?: ""
+            val first = int_at(body, "params.range.start.line") ?: 0
+            val last = int_at(body, "params.range.end.line") ?: 9223372036854775807
+            lsp_inlay_hints(answer.as_str(), text.as_str(), first as uint64, last as uint64, self.utf8)
+        }
+        "textDocument/semanticTokens/full" => {
+            val answer = self.ask_typed("tokens", path.as_str(), -1, "", messages) ?: ""
+            lsp_semantic_tokens(answer.as_str(), text.as_str(), self.utf8)
+        }
+        _ => {
+            val answer = self.ask_at("rename", body, path.as_str(), text.as_str(), messages) ?: ""
+            lsp_prepare_rename(answer.as_str(), text.as_str(), self.utf8)
+        }
+    }
+    return Option.Some(result_reply(id, result.as_str()))
+}
+
+/// A rename's edits, or the compiler's reason for refusing it.
+mutating fun Server.rename(id: str, body: str, path: str, text: str, messages: &var List<String>): String {
+    val new_name = string_at(body, "params.newName") ?: ""
+    val offset = self.offset_at(body, text)
+    val answer = self.ask_typed("rename", path, offset as int64, new_name.as_str(), messages) ?: ""
+    val refusal = rename_refusal(answer.as_str())
+    if refusal.is_some() { return error_reply(id, ErrorCode.RequestFailed, (refusal ?: "").as_str()) }
+    return result_reply(id, lsp_rename(answer.as_str(), new_name.as_str(), &self.file_texts(), self.utf8).as_str())
+}
+
+/// The compiler's answer to a typed `question` about the position the
+/// request names.
+mutating fun Server.ask_at(question: str, body: str, path: str, text: str, messages: &var List<String>): String? {
+    val offset = self.offset_at(body, text)
+    return self.ask_typed(question, path, offset as int64, "", messages)
+}
+
+/// The compiler's answer to a typed `question` about `path`: at `offset`
+/// unless it is negative, and naming `new_name` unless it is empty.
+mutating fun Server.ask_typed(question: str, path: str, offset: int64, new_name: str,
+                              messages: &var List<String>): String? {
+    val project = self.project?.clone() ?: return null
+    val entry = project.crate_for(path) ?: return null
+    val writer = JsonWriter.object()
+    writer.field_string("path", path)
+    if offset >= 0 { writer.field_int64("offset", offset) }
+    if !new_name.is_empty() { writer.field_string("new_name", new_name) }
+    writer.field_raw("crates", project.typed_crates(&entry).as_str())
+    return self.ask_compiler(question, writer.finish().as_str(), messages)
+}
+
+/// The byte offset of the request's `position` in `text`.
+fun Server.offset_at(body: str, text: str): uint64 {
+    val line = int_at(body, "params.position.line") ?: 0
+    val character = int_at(body, "params.position.character") ?: 0
+    return offset_of(text, line as uint64, character as uint64, self.utf8)
+}
+
+/// Open documents' text, else what is on disk: what positions in other
+/// files are counted in.
+fun Server.file_texts(): TextSource {
+    return TextSource { documents: self.documents.clone() }
+}
+
+/// One chain per requested position, in the order they came.
+mutating fun Server.selection_ranges(body: str, path: str, text: str, messages: &var List<String>): String {
+    val positions = positions_at(body)
+    var writer = JsonWriter.new()
+    writer.begin_array()
+    while at in &positions {
+        val offset = offset_of(text, at.line, at.character, self.utf8)
+        val params = "{\"path\":${path.json_quoted()},\"offset\":${offset}}"
+        val answer = self.ask_compiler("selection", params.as_str(), messages) ?: ""
+        writer.write_raw(lsp_selection(answer.as_str(), text, offset, self.utf8).as_str())
+    }
+    writer.end_array()
+    return writer.finish()
+}

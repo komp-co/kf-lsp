@@ -8,6 +8,9 @@ pub enum ErrorCode {
     InvalidRequest
     MethodNotFound
     ServerNotInitialized
+    /// The request was understood and cannot be carried out, such as a
+    /// rename that would change what a name means.
+    RequestFailed
 }
 
 pub fun ErrorCode.number(): int64 {
@@ -16,6 +19,7 @@ pub fun ErrorCode.number(): int64 {
         InvalidRequest => -32600
         MethodNotFound => -32601
         ServerNotInitialized => -32002
+        RequestFailed => -32803
     }
 }
 

@@ -38,6 +38,12 @@ pub fun int_at(text: str, path: str): int64? {
     return Option.Some(value)
 }
 
+pub fun bool_at(text: str, path: str): bool? {
+    var reader = value_at(text, path) ?: return null
+    if reader.peek_kind() != JsonKind.Bool { return null }
+    return Option.Some(reader.read_bool())
+}
+
 /// Every string in the array `path` leads to; empty when there is none.
 pub fun strings_at(text: str, path: str): List<String> {
     var out = List.new<String>()

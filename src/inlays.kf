@@ -1,0 +1,44 @@
+// The compiler's `inlays` answer as LSP inlay hints.
+
+import json.reader.*
+import json.writer.*
+
+/// `textDocument/inlayHint`'s result: the type hints whose position falls
+/// on the lines `first_line` to `last_line`.
+pub fun lsp_inlay_hints(answer: str, text: str, first_line: uint64, last_line: uint64, utf8: bool): String {
+    var writer = JsonWriter.new()
+    writer.begin_array()
+    writer.write_hints(answer, text, first_line, last_line, utf8)
+    writer.end_array()
+    return writer.finish()
+}
+
+mutating fun JsonWriter.write_hints(answer: str, text: str, first_line: uint64, last_line: uint64, utf8: bool): void {
+    var reader = value_at(answer, "result.inlays") ?: return
+    if !reader.begin_array() { return }
+    var walker = PositionWalker.new()
+    while reader.array_has_next() {
+        if !reader.begin_object() {
+            reader.skip_value()
+            continue
+        }
+        var offset: uint64 = 0
+        var label = String.from("")
+        while reader.object_has_next() {
+            val key = reader.read_key()
+            when key.as_str() {
+                "byte_offset" => offset = reader.read_uint64()
+                "label" => label = reader.read_string()
+                _ => reader.skip_value()
+            }
+        }
+        val at = walker.advance_to(text, offset, utf8)
+        if at.line < first_line || at.line > last_line { continue }
+        self.begin_object()
+        self.key("position")
+        self.write_position(&at)
+        self.field_string("label", label.as_str())
+        self.field_int64("kind", 1)
+        self.end_object()
+    }
+}

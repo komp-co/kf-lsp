@@ -45,6 +45,8 @@ pub struct Server {
     var edited_at: Instant?
     /// Files the editor was last told have diagnostics.
     var published: List<String>
+    /// The fixes those diagnostics carry.
+    var fixes: List<Fix>
 }
 
 impl Server {
@@ -53,7 +55,7 @@ impl Server {
         return Server {
             phase: Phase.Starting, utf8: false, root: "", komp: String.from(komp), project: null,
             compiler: List.new<Compiler>(), documents: Documents.new(), dirty: List.new<String>(), edited_at: null,
-            published: List.new<String>()
+            published: List.new<String>(), fixes: List.new<Fix>()
         }
     }
 
@@ -98,66 +100,12 @@ impl Server {
                 if method == "initialize" {
                     return error_reply(id, ErrorCode.InvalidRequest, "initialize was already sent")
                 }
-                val outline = self.outline(method, body, messages)
-                if outline.is_none() { return error_reply(id, ErrorCode.MethodNotFound, "no handler for ${method}") }
-                result_reply(id, (outline ?: "").as_str())
+                val reply = self.request(id, method, body, messages)
+                if reply.is_none() { return error_reply(id, ErrorCode.MethodNotFound, "no handler for ${method}") }
+                reply ?: String.from("")
             }
             ShuttingDown => error_reply(id, ErrorCode.InvalidRequest, "the server is shutting down")
         }
-    }
-
-    /// The result of an outline request; `null` for a method that is not
-    /// one. A file the compiler cannot answer about gets an empty result.
-    mutating fun outline(method: str, body: str, messages: &var List<String>): String? {
-        val empty = when method {
-            "textDocument/documentSymbol" => "[]"
-            "textDocument/foldingRange" => "[]"
-            "textDocument/selectionRange" => "[]"
-            "textDocument/hover" => "null"
-            _ => ""
-        }
-        if empty.is_empty() { return null }
-        val uri = string_at(body, "params.textDocument.uri") ?: return Option.Some(String.from(empty))
-        val path = uri_to_path(uri.as_str()) ?: return Option.Some(String.from(empty))
-        if !self.ensure_compiler(messages) { return Option.Some(String.from(empty)) }
-        val text = self.text_for(path.as_str())
-        if method == "textDocument/hover" {
-            return Option.Some(self.hover(body, path.as_str(), text.as_str(), messages))
-        }
-        if method == "textDocument/selectionRange" {
-            return Option.Some(self.selection_ranges(body, path.as_str(), text.as_str(), messages))
-        }
-        val question = if method == "textDocument/documentSymbol" { "symbols" } else { "folding" }
-        val answer = self.ask_compiler(question, staged_params(path.as_str(), null).as_str(), messages) ?: ""
-        if question == "symbols" { return Option.Some(lsp_symbols(answer.as_str(), text.as_str(), self.utf8)) }
-        return Option.Some(lsp_folding(answer.as_str(), text.as_str(), self.utf8))
-    }
-
-    /// What is under the cursor, from the typed crates around the file.
-    mutating fun hover(body: str, path: str, text: str, messages: &var List<String>): String {
-        val project = self.project?.clone() ?: return String.from("null")
-        val entry = project.crate_for(path) ?: return String.from("null")
-        val line = int_at(body, "params.position.line") ?: 0
-        val character = int_at(body, "params.position.character") ?: 0
-        val offset = offset_of(text, line as uint64, character as uint64, self.utf8)
-        val params = "{\"path\":${path.json_quoted()},\"offset\":${offset},\"crates\":${project.typed_crates(&entry)}}"
-        val answer = self.ask_compiler("hover", params.as_str(), messages) ?: ""
-        return lsp_hover(answer.as_str(), text, self.utf8)
-    }
-
-    /// One chain per requested position, in the order they came.
-    mutating fun selection_ranges(body: str, path: str, text: str, messages: &var List<String>): String {
-        val positions = positions_at(body)
-        var writer = JsonWriter.new()
-        writer.begin_array()
-        while at in &positions {
-            val offset = offset_of(text, at.line, at.character, self.utf8)
-            val params = "{\"path\":${path.json_quoted()},\"offset\":${offset}}"
-            val answer = self.ask_compiler("selection", params.as_str(), messages) ?: ""
-            writer.write_raw(lsp_selection(answer.as_str(), text, offset, self.utf8).as_str())
-        }
-        writer.end_array()
-        return writer.finish()
     }
 
     /// A file's open text, else what is on disk.
@@ -195,6 +143,22 @@ impl Server {
         writer.field_bool("foldingRangeProvider", true)
         writer.field_bool("selectionRangeProvider", true)
         writer.field_bool("hoverProvider", true)
+        writer.field_bool("definitionProvider", true)
+        writer.field_bool("referencesProvider", true)
+        writer.field_raw("signatureHelpProvider", "{\"triggerCharacters\":[\"(\",\",\"]}")
+        writer.field_raw("completionProvider", "{\"triggerCharacters\":[\".\"]}")
+        writer.field_bool("inlayHintProvider", true)
+        writer.key("semanticTokensProvider")
+        writer.begin_object()
+        writer.key("legend")
+        writer.begin_object()
+        writer.field_raw("tokenTypes", token_legend().as_str())
+        writer.field_raw("tokenModifiers", "[]")
+        writer.end_object()
+        writer.field_bool("full", true)
+        writer.end_object()
+        writer.field_raw("renameProvider", "{\"prepareProvider\":true}")
+        writer.field_raw("codeActionProvider", "{\"codeActionKinds\":[\"quickfix\"]}")
         writer.end_object()
         writer.key("serverInfo")
         writer.begin_object()
@@ -274,7 +238,7 @@ impl Server {
     }
 
     mutating fun publish_answer(entry: &CrateEntry, answer: str, messages: &var List<String>): void {
-        val texts = TextSource { documents: self.documents.clone() }
+        val texts = self.file_texts()
         val found = diagnostics_by_file(answer, self.utf8, &texts)
         if found.is_none() {
             messages.push(log_message(1, "check of ${entry.name} failed: ${answer}"))
@@ -293,11 +257,17 @@ impl Server {
                 messages.push(publish(path.as_str(), &List.new<String>()))
             }
         }
+        var now_fixed = List.new<Fix>()
+        while fix in &self.fixes {
+            if !fix.path.as_str().starts_with(prefix.as_str()) { now_fixed.push(fix.clone()) }
+        }
         while file in &files {
             messages.push(publish(file.path.as_str(), &file.items))
             now_published.push(file.path.clone())
+            while fix in &file.fixes { now_fixed.push(fix.clone()) }
         }
         self.published = now_published
+        self.fixes = now_fixed
     }
 
     /// Starts the compiler on first need: the project from `komp metadata`,

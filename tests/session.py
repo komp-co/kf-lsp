@@ -107,8 +107,68 @@ def main():
           "params": {"textDocument": {"uri": uri}, "position": {"line": 5, "character": 12}}})
     hover = until(lambda m: m.get("id") == 14)["result"]
     expect("an edit is seen by the next hover", "twice(n: int32): int32" in hover["contents"]["value"])
+    at_call = {"textDocument": {"uri": uri}, "position": {"line": 5, "character": 12}}
+    send({"id": 15, "method": "textDocument/definition", "params": at_call})
+    definition = until(lambda m: m.get("id") == 15)["result"]
+    expect("a call goes to its declaration",
+           definition == {"uri": uri, "range": {"start": {"line": 0, "character": 4}, "end": {"line": 0, "character": 9}}})
+    send({"id": 16, "method": "textDocument/references", "params": dict(at_call, context={"includeDeclaration": False})})
+    uses = until(lambda m: m.get("id") == 16)["result"]
+    expect("references are the uses",
+           [u["range"]["start"] for u in uses] == [{"line": 5, "character": 11}])
+    send({"id": 17, "method": "textDocument/signatureHelp",
+          "params": {"textDocument": {"uri": uri}, "position": {"line": 5, "character": 17}}})
+    help = until(lambda m: m.get("id") == 17)["result"]
+    expect("signature help names the callee and its parameter",
+           help["signatures"][0]["label"] == "twice(n: int32): int32" and help["activeParameter"] == 0)
 
-    send({"id": 2, "method": "textDocument/semanticTokens/full", "params": {}})
+    named = ("fun twice(n: int32): int32 {\n    return n * 2\n}\n\n"
+             "fun main(): int32 {\n    val four = twice(2)\n    return twice(four)\n}\n")
+    send({"method": "textDocument/didChange",
+          "params": {"textDocument": {"uri": uri, "version": 10}, "contentChanges": [{"text": named}]}})
+    send({"id": 18, "method": "textDocument/inlayHint",
+          "params": {"textDocument": {"uri": uri},
+                     "range": {"start": {"line": 0, "character": 0}, "end": {"line": 8, "character": 0}}}})
+    hints = until(lambda m: m.get("id") == 18)["result"]
+    expect("an unannotated binding gets its type as a hint",
+           hints == [{"position": {"line": 5, "character": 12}, "label": ": int32", "kind": 1}])
+    send({"id": 19, "method": "textDocument/semanticTokens/full", "params": document})
+    data = until(lambda m: m.get("id") == 19)["result"]["data"]
+    expect("the first token is twice, a function", data[:5] == [0, 4, 5, 1, 0])
+    at_use = {"textDocument": {"uri": uri}, "position": {"line": 6, "character": 11}}
+    send({"id": 20, "method": "textDocument/completion", "params": at_use})
+    labels = [i["label"] for i in until(lambda m: m.get("id") == 20)["result"]["items"]]
+    expect("completion offers the local and the function", "four" in labels and "twice" in labels)
+    send({"id": 21, "method": "textDocument/prepareRename", "params": at_use})
+    expect("prepare-rename answers the name under the cursor",
+           until(lambda m: m.get("id") == 21)["result"]
+           == {"start": {"line": 6, "character": 11}, "end": {"line": 6, "character": 16}})
+    send({"id": 22, "method": "textDocument/rename", "params": dict(at_use, newName="double")})
+    changes = until(lambda m: m.get("id") == 22)["result"]["changes"]
+    expect("a rename edits the declaration and both calls",
+           list(changes) == [uri] and len(changes[uri]) == 3
+           and all(edit["newText"] == "double" for edit in changes[uri]))
+    send({"id": 23, "method": "textDocument/rename", "params": dict(at_use, newName="main")})
+    refusal = until(lambda m: m.get("id") == 23)["error"]
+    expect("a rename onto a taken name is refused with the reason",
+           refusal["code"] == -32803 and "main" in refusal["message"])
+
+    misspelt = ("struct Point {\n    val x: int32\n}\n\nfun Point.sum(): int32 {\n    return self.x\n}\n\n"
+                "fun main(): int32 {\n    val p = Point { x: 1 }\n    return p.sunm()\n}\n")
+    send({"method": "textDocument/didChange",
+          "params": {"textDocument": {"uri": uri, "version": 11}, "contentChanges": [{"text": misspelt}]}})
+    published = until(lambda m: m.get("method") == "textDocument/publishDiagnostics")["params"]
+    expect("a misspelt method is reported", len(published["diagnostics"]) == 1)
+    cursor = {"start": {"line": 10, "character": 4}, "end": {"line": 10, "character": 4}}
+    send({"id": 24, "method": "textDocument/codeAction",
+          "params": {"textDocument": {"uri": uri}, "range": cursor, "context": {"diagnostics": []}}})
+    actions = until(lambda m: m.get("id") == 24)["result"]
+    edit = actions[0]["edit"]["changes"][uri][0] if actions else {}
+    expect("the compiler's fix is offered on the line",
+           len(actions) == 1 and actions[0]["title"] == "change to `sum`" and edit["newText"] == "sum"
+           and edit["range"] == {"start": {"line": 10, "character": 13}, "end": {"line": 10, "character": 17}})
+
+    send({"id": 2, "method": "textDocument/codeLens", "params": {}})
     expect("an unknown request is MethodNotFound",
            until(lambda m: m.get("id") == 2)["error"]["code"] == -32601)
     send({"id": 3, "method": "shutdown"})
