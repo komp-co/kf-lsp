@@ -45,3 +45,14 @@ fun check_params_carry_the_crate(): void {
         "\"loads\":[\"core\",\"alloc\"],\"lints\":[\"dead_code=allow\"]}}"
     assert_eq(project.check_params(&app).as_str(), expected.as_str(), "the metadata row")
 }
+
+@test
+fun typed_crates_list_the_loads_then_the_crate(): void {
+    val project = sample()
+    val app = project.crate_named("app") ?: CrateEntry {
+        name: "", root: "", member: false, loads: List.new<String>(), lints: List.new<String>()
+    }
+    // `alloc` is not in the sample's crates, so it is passed over.
+    val expected = "[{\"name\":\"core\",\"root\":\"/k/libs/core\"},{\"name\":\"app\",\"root\":\"/w/app\"}]"
+    assert_eq(project.typed_crates(&app).as_str(), expected, "dependencies first")
+}

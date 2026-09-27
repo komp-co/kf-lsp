@@ -6,10 +6,10 @@ other:
 - **`kflat_lsp`, in KFlat (`src/`),** is the server going forward. It keeps
   one `kflatc serve` running and hands it the editor's unsaved text, so
   diagnostics and the outline follow typing instead of saves. Today it
-  answers diagnostics, document symbols, folding ranges and selection
-  ranges.
-- **`server.js`, the Node bridge,** answers everything else (hover,
-  completion, rename and the rest) by running `komp query` per request, on
+  answers diagnostics, document symbols, folding ranges, selection
+  ranges and hover.
+- **`server.js`, the Node bridge,** answers everything else (completion,
+  definition, rename and the rest) by running `komp query` per request, on
   saved files. It goes away once the KFlat server answers the same.
 
 ## The KFlat server
@@ -22,7 +22,8 @@ how the workspace is laid out.
 On the first opened file it runs `komp check` on the workspace once, so every
 dependency's interface is built, then starts `kflatc serve`. Each open and
 edit is staged with the compiler, and the file's crate is checked once typing
-pauses for 300 ms. Diagnostics for every file of that crate are published,
+pauses for 300 ms. Hover types the file's crate and what it loads once, and
+answers from that until the next edit. Diagnostics for every file of that crate are published,
 and cleared when a later check no longer reports them. It negotiates
 `positionEncoding: utf-8` when the client offers it, and counts UTF-16 code
 units otherwise.
@@ -53,13 +54,14 @@ KOMP_BIN=../komp/.build/komp python3 tests/session.py target/kflat/kflat_lsp
 
 `tests/session.py` drives one editor session end to end: an error published
 where it is, then cleared by a fix typed in three quick edits that are
-checked once, then the outline, folds and selection of the unsaved text.
+checked once, then the outline, folds and selection of the unsaved text, and
+a hover before and after an edit.
 
 ### Limits for now
 
-- Hover, completion, definition, references, rename, inlay hints, signature
-  help, semantic tokens and code actions answer MethodNotFound; the bridge
-  still has them.
+- Completion, definition, references, rename, inlay hints, signature help,
+  semantic tokens and code actions answer MethodNotFound; the bridge still
+  has them.
 - Only the crate holding the edited file is checked. A crate that depends on
   it sees its interface as of the last `komp check` or save.
 - Memory grows with each check: the compiler does not yet free a check's

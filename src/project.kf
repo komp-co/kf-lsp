@@ -123,6 +123,18 @@ impl Project {
         return null
     }
 
+    /// The crates a typed request names for `entry`: what it loads, then
+    /// itself, as `{"name", "root"}` objects.
+    pub fun typed_crates(entry: &CrateEntry): String {
+        var writer = JsonWriter.array()
+        while name in &entry.loads {
+            val loaded = self.crate_named(name.as_str()) ?: continue
+            writer.write_crate_source(&loaded)
+        }
+        writer.write_crate_source(entry)
+        return writer.finish()
+    }
+
     /// `kflatc serve`'s `check` params for `entry`.
     pub fun check_params(entry: &CrateEntry): String {
         val writer = JsonWriter.object()
@@ -142,4 +154,11 @@ impl Project {
         writer.end_object()
         return writer.finish()
     }
+}
+
+mutating fun JsonWriter.write_crate_source(entry: &CrateEntry): void {
+    self.begin_object()
+    self.field_string("name", entry.name.as_str())
+    self.field_string("root", entry.root.as_str())
+    self.end_object()
 }

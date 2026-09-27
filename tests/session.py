@@ -95,7 +95,20 @@ def main():
     expect("selection grows from the literal to the declaration",
            chain["range"]["start"] == {"line": 1, "character": 19} and chain["parent"]["range"]["start"] == {"line": 0, "character": 0})
 
-    send({"id": 2, "method": "textDocument/hover", "params": {}})
+    send({"id": 13, "method": "textDocument/hover",
+          "params": {"textDocument": {"uri": uri}, "position": {"line": 2, "character": 11}}})
+    hover = until(lambda m: m.get("id") == 13)["result"]
+    expect("hover names a local's type",
+           hover["contents"]["value"] == "```kflat\nint32\n```" and hover["range"]["start"] == {"line": 2, "character": 11})
+    edited = "fun twice(n: int32): int32 {\n    return n * 2\n}\n\nfun main(): int32 {\n    return twice(4)\n}\n"
+    send({"method": "textDocument/didChange",
+          "params": {"textDocument": {"uri": uri, "version": 9}, "contentChanges": [{"text": edited}]}})
+    send({"id": 14, "method": "textDocument/hover",
+          "params": {"textDocument": {"uri": uri}, "position": {"line": 5, "character": 12}}})
+    hover = until(lambda m: m.get("id") == 14)["result"]
+    expect("an edit is seen by the next hover", "twice(n: int32): int32" in hover["contents"]["value"])
+
+    send({"id": 2, "method": "textDocument/semanticTokens/full", "params": {}})
     expect("an unknown request is MethodNotFound",
            until(lambda m: m.get("id") == 2)["error"]["code"] == -32601)
     send({"id": 3, "method": "shutdown"})
