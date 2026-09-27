@@ -5,9 +5,10 @@ other:
 
 - **`kflat_lsp`, in KFlat (`src/`),** is the server going forward. It keeps
   one `kflatc serve` running and hands it the editor's unsaved text, so
-  diagnostics follow typing instead of saves. Today it answers diagnostics
-  only.
-- **`server.js`, the Node bridge,** answers everything else (outline, hover,
+  diagnostics and the outline follow typing instead of saves. Today it
+  answers diagnostics, document symbols, folding ranges and selection
+  ranges.
+- **`server.js`, the Node bridge,** answers everything else (hover,
   completion, rename and the rest) by running `komp query` per request, on
   saved files. It goes away once the KFlat server answers the same.
 
@@ -52,11 +53,13 @@ KOMP_BIN=../komp/.build/komp python3 tests/session.py target/kflat/kflat_lsp
 
 `tests/session.py` drives one editor session end to end: an error published
 where it is, then cleared by a fix typed in three quick edits that are
-checked once.
+checked once, then the outline, folds and selection of the unsaved text.
 
 ### Limits for now
 
-- Diagnostics only; every other request answers MethodNotFound.
+- Hover, completion, definition, references, rename, inlay hints, signature
+  help, semantic tokens and code actions answer MethodNotFound; the bridge
+  still has them.
 - Only the crate holding the edited file is checked. A crate that depends on
   it sees its interface as of the last `komp check` or save.
 - Memory grows with each check: the compiler does not yet free a check's
