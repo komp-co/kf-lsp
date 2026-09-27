@@ -21,11 +21,18 @@ mutating fun Server.request(id: str, method: str, body: str, messages: &var List
         "textDocument/semanticTokens/full" => "{\"data\":[]}"
         "textDocument/prepareRename" => "null"
         "textDocument/rename" => "null"
+        "textDocument/codeAction" => "[]"
         _ => ""
     }
     if empty.is_empty() { return null }
     val uri = string_at(body, "params.textDocument.uri") ?: return Option.Some(result_reply(id, empty))
     val path = uri_to_path(uri.as_str()) ?: return Option.Some(result_reply(id, empty))
+    if method == "textDocument/codeAction" {
+        val first = int_at(body, "params.range.start.line") ?: 0
+        val last = int_at(body, "params.range.end.line") ?: first
+        return Option.Some(result_reply(id, lsp_code_actions(&self.fixes, path.as_str(), first as uint64,
+                                                             last as uint64).as_str()))
+    }
     if !self.ensure_compiler(messages) { return Option.Some(result_reply(id, empty)) }
     val text = self.text_for(path.as_str())
     if method == "textDocument/rename" {

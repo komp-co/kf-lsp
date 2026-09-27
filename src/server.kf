@@ -45,6 +45,8 @@ pub struct Server {
     var edited_at: Instant?
     /// Files the editor was last told have diagnostics.
     var published: List<String>
+    /// The fixes those diagnostics carry.
+    var fixes: List<Fix>
 }
 
 impl Server {
@@ -53,7 +55,7 @@ impl Server {
         return Server {
             phase: Phase.Starting, utf8: false, root: "", komp: String.from(komp), project: null,
             compiler: List.new<Compiler>(), documents: Documents.new(), dirty: List.new<String>(), edited_at: null,
-            published: List.new<String>()
+            published: List.new<String>(), fixes: List.new<Fix>()
         }
     }
 
@@ -156,6 +158,7 @@ impl Server {
         writer.field_bool("full", true)
         writer.end_object()
         writer.field_raw("renameProvider", "{\"prepareProvider\":true}")
+        writer.field_raw("codeActionProvider", "{\"codeActionKinds\":[\"quickfix\"]}")
         writer.end_object()
         writer.key("serverInfo")
         writer.begin_object()
@@ -254,11 +257,17 @@ impl Server {
                 messages.push(publish(path.as_str(), &List.new<String>()))
             }
         }
+        var now_fixed = List.new<Fix>()
+        while fix in &self.fixes {
+            if !fix.path.as_str().starts_with(prefix.as_str()) { now_fixed.push(fix.clone()) }
+        }
         while file in &files {
             messages.push(publish(file.path.as_str(), &file.items))
             now_published.push(file.path.clone())
+            while fix in &file.fixes { now_fixed.push(fix.clone()) }
         }
         self.published = now_published
+        self.fixes = now_fixed
     }
 
     /// Starts the compiler on first need: the project from `komp metadata`,

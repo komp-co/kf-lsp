@@ -54,6 +54,7 @@ mutating fun JsonWriter.write_uses(answer: str, text_of: &dyn FileText, utf8: bo
 /// The `{"file", "byte_start", "byte_end"}` object the reader stands at;
 /// `null`, with the value passed over, for anything else.
 fun read_file_span(reader: &var JsonReader): FileSpan? {
+    if reader.take_null() { return null }
     if !reader.begin_object() {
         reader.skip_value()
         return null

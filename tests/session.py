@@ -153,6 +153,21 @@ def main():
     expect("a rename onto a taken name is refused with the reason",
            refusal["code"] == -32803 and "main" in refusal["message"])
 
+    misspelt = ("struct Point {\n    val x: int32\n}\n\nfun Point.sum(): int32 {\n    return self.x\n}\n\n"
+                "fun main(): int32 {\n    val p = Point { x: 1 }\n    return p.sunm()\n}\n")
+    send({"method": "textDocument/didChange",
+          "params": {"textDocument": {"uri": uri, "version": 11}, "contentChanges": [{"text": misspelt}]}})
+    published = until(lambda m: m.get("method") == "textDocument/publishDiagnostics")["params"]
+    expect("a misspelt method is reported", len(published["diagnostics"]) == 1)
+    cursor = {"start": {"line": 10, "character": 4}, "end": {"line": 10, "character": 4}}
+    send({"id": 24, "method": "textDocument/codeAction",
+          "params": {"textDocument": {"uri": uri}, "range": cursor, "context": {"diagnostics": []}}})
+    actions = until(lambda m: m.get("id") == 24)["result"]
+    edit = actions[0]["edit"]["changes"][uri][0] if actions else {}
+    expect("the compiler's fix is offered on the line",
+           len(actions) == 1 and actions[0]["title"] == "change to `sum`" and edit["newText"] == "sum"
+           and edit["range"] == {"start": {"line": 10, "character": 13}, "end": {"line": 10, "character": 17}})
+
     send({"id": 2, "method": "textDocument/codeLens", "params": {}})
     expect("an unknown request is MethodNotFound",
            until(lambda m: m.get("id") == 2)["error"]["code"] == -32601)

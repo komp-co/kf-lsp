@@ -9,6 +9,8 @@ import json.writer.*
 pub struct FileDiagnostics {
     pub val path: String
     pub var items: List<String>
+    /// The repairs the diagnostics carry, as code actions.
+    pub var fixes: List<Fix>
 }
 
 /// What the compiler reported, as far as the editor needs it.
@@ -16,6 +18,17 @@ struct Reported {
     val severity: String
     val code: String
     val message: String
+    val byte_start: uint64
+    val byte_end: uint64
+    val file: String
+    /// The compiler's repair; `repair.file` is empty when there is none.
+    val repair: Repair
+}
+
+/// A replacement the compiler offers for what a diagnostic reports.
+struct Repair {
+    val title: String
+    val replacement: String
     val byte_start: uint64
     val byte_end: uint64
     val file: String
@@ -34,9 +47,13 @@ pub fun diagnostics_by_file(answer: str, utf8: bool, text_of: &dyn FileText): Li
         val text = text_of.text_of(reported.file.as_str())
         val item = lsp_diagnostic(&reported, text.as_str(), utf8)
         if out.position_of_path(reported.file.as_str()).is_none() {
-            out.push(FileDiagnostics { path: reported.file.clone(), items: List.new<String>() })
+            out.push(FileDiagnostics { path: reported.file.clone(), items: List.new<String>(), fixes: List.new<Fix>() })
         }
         val at = out.position_of_path(reported.file.as_str()) ?: 0
+        if !reported.repair.file.is_empty() {
+            val repaired = text_of.text_of(reported.repair.file.as_str())
+            out[at].fixes.push(fix_for(&reported, item.as_str(), text.as_str(), repaired.as_str(), utf8))
+        }
         out[at].items.push(item)
     }
     if reader.has_error() { return null }
@@ -62,6 +79,7 @@ fun read_reported(reader: &var JsonReader): Reported {
     var byte_start: uint64 = 0
     var byte_end: uint64 = 0
     var file = String.from("")
+    var repair = no_repair()
     if reader.begin_object() {
         while reader.object_has_next() {
             val key = reader.read_key()
@@ -72,12 +90,53 @@ fun read_reported(reader: &var JsonReader): Reported {
                 "byte_start" => byte_start = reader.read_uint64()
                 "byte_end" => byte_end = reader.read_uint64()
                 "file" => { if !reader.take_null() { file = reader.read_string() } }
+                "fix" => repair = read_repair(reader)
                 _ => reader.skip_value()
             }
         }
     }
+    if repair.file.is_empty() && !repair.title.is_empty() { repair = repair.in_file(file.as_str()) }
     return Reported {
-        severity: severity, code: code, message: message, byte_start: byte_start, byte_end: byte_end, file: file
+        severity: severity, code: code, message: message, byte_start: byte_start, byte_end: byte_end, file: file,
+        repair: repair
+    }
+}
+
+fun no_repair(): Repair {
+    return Repair { title: "", replacement: "", byte_start: 0, byte_end: 0, file: "" }
+}
+
+/// The `fix` object the reader stands at; no repair for `null`. A repair
+/// with no `file` is in the diagnostic's own file.
+fun read_repair(reader: &var JsonReader): Repair {
+    if reader.take_null() { return no_repair() }
+    if !reader.begin_object() {
+        reader.skip_value()
+        return no_repair()
+    }
+    var title = String.from("apply fix")
+    var replacement = String.from("")
+    var byte_start: uint64 = 0
+    var byte_end: uint64 = 0
+    var file = String.from("")
+    while reader.object_has_next() {
+        val key = reader.read_key()
+        when key.as_str() {
+            "title" => title = reader.read_string()
+            "replacement" => replacement = reader.read_string()
+            "byte_start" => byte_start = reader.read_uint64()
+            "byte_end" => byte_end = reader.read_uint64()
+            "file" => { if !reader.take_null() { file = reader.read_string() } }
+            _ => reader.skip_value()
+        }
+    }
+    return Repair { title: title, replacement: replacement, byte_start: byte_start, byte_end: byte_end, file: file }
+}
+
+fun Repair.in_file(path: str): Repair {
+    return Repair {
+        title: self.title.clone(), replacement: self.replacement.clone(), byte_start: self.byte_start,
+        byte_end: self.byte_end, file: String.from(path)
     }
 }
 
