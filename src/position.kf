@@ -28,3 +28,23 @@ pub fun position_of(text: str, offset: uint64, utf8: bool): Position {
     }
     return Position { line: line, character: character }
 }
+
+/// The byte offset of an LSP position; a character past its line's end is
+/// the line's end, and a line past the text's end is the end.
+pub fun offset_of(text: str, line: uint64, character: uint64, utf8: bool): uint64 {
+    var at: uint64 = 0
+    var current: uint64 = 0
+    while current < line && at < text.byte_len() {
+        if text.byte(at) == 10 { current = current + 1 }
+        at = at + 1
+    }
+    var counted: uint64 = 0
+    while counted < character && at < text.byte_len() {
+        val byte = text.byte(at)
+        if byte == 10 { return at }
+        val width: uint64 = if byte < 128 { 1 } else if byte < 224 { 2 } else if byte < 240 { 3 } else { 4 }
+        counted = counted + if utf8 { width } else if width == 4 { 2 } else { 1 }
+        at = at + width
+    }
+    return at
+}

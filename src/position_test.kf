@@ -31,3 +31,30 @@ fun a_four_byte_character_is_two_utf16_units(): void {
 fun an_offset_past_the_end_is_the_end(): void {
     assert_eq(position_of("ab", 99, true).character, 2, "clamped")
 }
+
+@test
+fun a_position_on_the_second_line_is_its_byte(): void {
+    assert_eq(offset_of("ab\ncd", 1, 1, false), 4, "c is 3, d is 4")
+}
+
+@test
+fun a_utf16_position_skips_a_whole_character(): void {
+    assert_eq(offset_of("é=1", 0, 1, false), 2, "é is one unit, two bytes")
+}
+
+@test
+fun a_surrogate_pair_is_two_units(): void {
+    assert_eq(offset_of("😀x", 0, 2, false), 4, "past the emoji")
+}
+
+@test
+fun a_character_past_the_line_is_its_end(): void {
+    assert_eq(offset_of("ab\ncd", 0, 9, true), 2, "the newline")
+}
+
+@test
+fun offsets_and_positions_agree(): void {
+    val text = "fun é(): int32 {\n    return 😀\n}\n"
+    val at = position_of(text, 27, false)
+    assert_eq(offset_of(text, at.line, at.character, false), 27, "a round trip")
+}
