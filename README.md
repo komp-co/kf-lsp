@@ -28,16 +28,11 @@ units otherwise.
 
 ## Building it
 
-`kflatc serve` is newer than the latest release, so build with a komp from
-komp's `development` branch, checked out beside this repository (`kf.toml`
-names its `std` there):
+Build it with an installed kflat: a release from 0.5.1 on, the version in
+`kflat-version` being the one CI builds with.
 
 ```sh
-git clone -b development https://github.com/komp-co/komp ../komp
-git clone https://github.com/komp-co/json ../json
-git -C ../json checkout "$(cat ../komp/bootstrap/json.rev)"
-(cd ../komp && sh scripts/refresh-komp.sh)
-../komp/.build/komp build .        # target/kflat/kflat_lsp
+komp build .        # target/kflat/kflat_lsp
 ```
 
 Run it with `KOMP_BIN` naming that komp (`komp` on `PATH` otherwise). It
@@ -46,8 +41,8 @@ speaks LSP over stdio.
 ## Testing it
 
 ```sh
-../komp/.build/komp test .
-KOMP_BIN=../komp/.build/komp python3 tests/session.py target/kflat/kflat_lsp
+komp test .
+python3 tests/session.py target/kflat/kflat_lsp
 ```
 
 `tests/session.py` drives one editor session end to end: an error published
@@ -69,7 +64,7 @@ vim.api.nvim_create_autocmd("FileType", {
       name = "kflat-lsp",
       cmd = { vim.fn.expand("~/path/to/kf-lsp/target/kflat/kflat_lsp") },
       root_dir = vim.fs.root(args.buf, "kf.toml"),
-      cmd_env = { KOMP_BIN = vim.fn.expand("~/path/to/komp/.build/komp") },
+      cmd_env = { KOMP_BIN = vim.fn.expand("~/.kflat/bin/komp") },
     })
   end,
 })

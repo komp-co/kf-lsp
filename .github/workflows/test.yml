@@ -1,8 +1,7 @@
 name: Test
 
-# The server is built with komp from `development`: it needs `kflatc serve`,
-# which no release has yet. komp sits beside this checkout, where kf.toml's
-# `std` path expects it, with json beside komp at the commit komp pins.
+# The server is built with the kflat release `kflat-version` names, installed
+# from its release archive and kept between runs.
 on:
   pull_request:
   push:
@@ -17,18 +16,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build komp from development
+      - name: Read the kflat version
+        id: kflat
+        run: echo "version=$(cat kflat-version)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        id: toolchain
+        with:
+          path: ~/.kflat
+          key: kflat-${{ steps.kflat.outputs.version }}
+
+      - name: Install kflat ${{ steps.kflat.outputs.version }}
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        env:
+          VERSION: ${{ steps.kflat.outputs.version }}
         run: |
-          git clone -q --depth 1 --branch development https://github.com/komp-co/komp ../komp
-          git clone -q https://github.com/komp-co/json ../json
-          git -C ../json checkout -q --detach "$(cat ../komp/bootstrap/json.rev)"
-          (cd ../komp && sh scripts/refresh-komp.sh)
-          echo "KOMP_BIN=$(cd ../komp && pwd)/.build/komp" >> "$GITHUB_ENV"
+          base="https://github.com/komp-co/komp/releases/download/v$VERSION"
+          curl -fsSLO "$base/kflat-$VERSION.tar.gz"
+          curl -fsSLO "$base/kflat-$VERSION.tar.gz.sha256"
+          sha256sum -c "kflat-$VERSION.tar.gz.sha256"
+          tar -xzf "kflat-$VERSION.tar.gz"
+          sh "kflat-$VERSION/install.sh"
+
+      - name: Put komp on PATH
+        run: |
+          echo "$HOME/.kflat/bin" >> "$GITHUB_PATH"
+          echo "KOMP_BIN=$HOME/.kflat/bin/komp" >> "$GITHUB_ENV"
 
       - name: Unit tests
-        run: '"$KOMP_BIN" test .'
+        run: komp test .
 
       - name: An editor session against the built server
         run: |
-          "$KOMP_BIN" build .
+          komp build .
           python3 tests/session.py target/kflat/kflat_lsp
