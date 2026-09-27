@@ -107,6 +107,20 @@ def main():
           "params": {"textDocument": {"uri": uri}, "position": {"line": 5, "character": 12}}})
     hover = until(lambda m: m.get("id") == 14)["result"]
     expect("an edit is seen by the next hover", "twice(n: int32): int32" in hover["contents"]["value"])
+    at_call = {"textDocument": {"uri": uri}, "position": {"line": 5, "character": 12}}
+    send({"id": 15, "method": "textDocument/definition", "params": at_call})
+    definition = until(lambda m: m.get("id") == 15)["result"]
+    expect("a call goes to its declaration",
+           definition == {"uri": uri, "range": {"start": {"line": 0, "character": 4}, "end": {"line": 0, "character": 9}}})
+    send({"id": 16, "method": "textDocument/references", "params": dict(at_call, context={"includeDeclaration": False})})
+    uses = until(lambda m: m.get("id") == 16)["result"]
+    expect("references are the uses",
+           [u["range"]["start"] for u in uses] == [{"line": 5, "character": 11}])
+    send({"id": 17, "method": "textDocument/signatureHelp",
+          "params": {"textDocument": {"uri": uri}, "position": {"line": 5, "character": 17}}})
+    help = until(lambda m: m.get("id") == 17)["result"]
+    expect("signature help names the callee and its parameter",
+           help["signatures"][0]["label"] == "twice(n: int32): int32" and help["activeParameter"] == 0)
 
     send({"id": 2, "method": "textDocument/semanticTokens/full", "params": {}})
     expect("an unknown request is MethodNotFound",

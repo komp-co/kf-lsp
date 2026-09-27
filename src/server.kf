@@ -98,22 +98,26 @@ impl Server {
                 if method == "initialize" {
                     return error_reply(id, ErrorCode.InvalidRequest, "initialize was already sent")
                 }
-                val outline = self.outline(method, body, messages)
-                if outline.is_none() { return error_reply(id, ErrorCode.MethodNotFound, "no handler for ${method}") }
-                result_reply(id, (outline ?: "").as_str())
+                val result = self.request(method, body, messages)
+                if result.is_none() { return error_reply(id, ErrorCode.MethodNotFound, "no handler for ${method}") }
+                result_reply(id, (result ?: "").as_str())
             }
             ShuttingDown => error_reply(id, ErrorCode.InvalidRequest, "the server is shutting down")
         }
     }
 
-    /// The result of an outline request; `null` for a method that is not
-    /// one. A file the compiler cannot answer about gets an empty result.
-    mutating fun outline(method: str, body: str, messages: &var List<String>): String? {
+    /// The result of a request about a document; `null` for a method that
+    /// is not one. A file the compiler cannot answer about gets an empty
+    /// result.
+    mutating fun request(method: str, body: str, messages: &var List<String>): String? {
         val empty = when method {
             "textDocument/documentSymbol" => "[]"
             "textDocument/foldingRange" => "[]"
             "textDocument/selectionRange" => "[]"
             "textDocument/hover" => "null"
+            "textDocument/definition" => "null"
+            "textDocument/references" => "[]"
+            "textDocument/signatureHelp" => "null"
             _ => ""
         }
         if empty.is_empty() { return null }
@@ -121,28 +125,53 @@ impl Server {
         val path = uri_to_path(uri.as_str()) ?: return Option.Some(String.from(empty))
         if !self.ensure_compiler(messages) { return Option.Some(String.from(empty)) }
         val text = self.text_for(path.as_str())
-        if method == "textDocument/hover" {
-            return Option.Some(self.hover(body, path.as_str(), text.as_str(), messages))
+        val result = when method {
+            "textDocument/documentSymbol" => {
+                val answer = self.ask_compiler("symbols", staged_params(path.as_str(), null).as_str(), messages) ?: ""
+                lsp_symbols(answer.as_str(), text.as_str(), self.utf8)
+            }
+            "textDocument/foldingRange" => {
+                val answer = self.ask_compiler("folding", staged_params(path.as_str(), null).as_str(), messages) ?: ""
+                lsp_folding(answer.as_str(), text.as_str(), self.utf8)
+            }
+            "textDocument/selectionRange" => self.selection_ranges(body, path.as_str(), text.as_str(), messages)
+            "textDocument/hover" => {
+                val answer = self.ask_at("hover", body, path.as_str(), text.as_str(), messages) ?: ""
+                lsp_hover(answer.as_str(), text.as_str(), self.utf8)
+            }
+            "textDocument/definition" => {
+                val answer = self.ask_at("references", body, path.as_str(), text.as_str(), messages) ?: ""
+                lsp_definition(answer.as_str(), &self.file_texts(), self.utf8)
+            }
+            "textDocument/references" => {
+                val answer = self.ask_at("references", body, path.as_str(), text.as_str(), messages) ?: ""
+                val with_declaration = bool_at(body, "params.context.includeDeclaration") ?: false
+                lsp_references(answer.as_str(), with_declaration, &self.file_texts(), self.utf8)
+            }
+            _ => {
+                val answer = self.ask_at("signature", body, path.as_str(), text.as_str(), messages) ?: ""
+                lsp_signature_help(answer.as_str())
+            }
         }
-        if method == "textDocument/selectionRange" {
-            return Option.Some(self.selection_ranges(body, path.as_str(), text.as_str(), messages))
-        }
-        val question = if method == "textDocument/documentSymbol" { "symbols" } else { "folding" }
-        val answer = self.ask_compiler(question, staged_params(path.as_str(), null).as_str(), messages) ?: ""
-        if question == "symbols" { return Option.Some(lsp_symbols(answer.as_str(), text.as_str(), self.utf8)) }
-        return Option.Some(lsp_folding(answer.as_str(), text.as_str(), self.utf8))
+        return Option.Some(result)
     }
 
-    /// What is under the cursor, from the typed crates around the file.
-    mutating fun hover(body: str, path: str, text: str, messages: &var List<String>): String {
-        val project = self.project?.clone() ?: return String.from("null")
-        val entry = project.crate_for(path) ?: return String.from("null")
+    /// The compiler's answer to a typed `question` about the position the
+    /// request names.
+    mutating fun ask_at(question: str, body: str, path: str, text: str, messages: &var List<String>): String? {
+        val project = self.project?.clone() ?: return null
+        val entry = project.crate_for(path) ?: return null
         val line = int_at(body, "params.position.line") ?: 0
         val character = int_at(body, "params.position.character") ?: 0
         val offset = offset_of(text, line as uint64, character as uint64, self.utf8)
         val params = "{\"path\":${path.json_quoted()},\"offset\":${offset},\"crates\":${project.typed_crates(&entry)}}"
-        val answer = self.ask_compiler("hover", params.as_str(), messages) ?: ""
-        return lsp_hover(answer.as_str(), text, self.utf8)
+        return self.ask_compiler(question, params.as_str(), messages)
+    }
+
+    /// Open documents' text, else what is on disk: what positions in other
+    /// files are counted in.
+    fun file_texts(): TextSource {
+        return TextSource { documents: self.documents.clone() }
     }
 
     /// One chain per requested position, in the order they came.
@@ -195,6 +224,9 @@ impl Server {
         writer.field_bool("foldingRangeProvider", true)
         writer.field_bool("selectionRangeProvider", true)
         writer.field_bool("hoverProvider", true)
+        writer.field_bool("definitionProvider", true)
+        writer.field_bool("referencesProvider", true)
+        writer.field_raw("signatureHelpProvider", "{\"triggerCharacters\":[\"(\",\",\"]}")
         writer.end_object()
         writer.key("serverInfo")
         writer.begin_object()
@@ -274,7 +306,7 @@ impl Server {
     }
 
     mutating fun publish_answer(entry: &CrateEntry, answer: str, messages: &var List<String>): void {
-        val texts = TextSource { documents: self.documents.clone() }
+        val texts = self.file_texts()
         val found = diagnostics_by_file(answer, self.utf8, &texts)
         if found.is_none() {
             messages.push(log_message(1, "check of ${entry.name} failed: ${answer}"))

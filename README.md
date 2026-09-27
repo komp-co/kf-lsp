@@ -7,9 +7,9 @@ other:
   one `kflatc serve` running and hands it the editor's unsaved text, so
   diagnostics and the outline follow typing instead of saves. Today it
   answers diagnostics, document symbols, folding ranges, selection
-  ranges and hover.
+  ranges, hover, go-to-definition, find-references and signature help.
 - **`server.js`, the Node bridge,** answers everything else (completion,
-  definition, rename and the rest) by running `komp query` per request, on
+  rename and the rest) by running `komp query` per request, on
   saved files. It goes away once the KFlat server answers the same.
 
 ## The KFlat server
@@ -22,8 +22,9 @@ how the workspace is laid out.
 On the first opened file it runs `komp check` on the workspace once, so every
 dependency's interface is built, then starts `kflatc serve`. Each open and
 edit is staged with the compiler, and the file's crate is checked once typing
-pauses for 300 ms. Hover types the file's crate and what it loads once, and
-answers from that until the next edit. Diagnostics for every file of that crate are published,
+pauses for 300 ms. Hover, definition, references and signature help type
+the file's crate and what it loads once, and answer from that until the next
+edit. Diagnostics for every file of that crate are published,
 and cleared when a later check no longer reports them. It negotiates
 `positionEncoding: utf-8` when the client offers it, and counts UTF-16 code
 units otherwise.
@@ -54,8 +55,9 @@ KOMP_BIN=../komp/.build/komp python3 tests/session.py target/kflat/kflat_lsp
 
 `tests/session.py` drives one editor session end to end: an error published
 where it is, then cleared by a fix typed in three quick edits that are
-checked once, then the outline, folds and selection of the unsaved text, and
-a hover before and after an edit.
+checked once, then the outline, folds and selection of the unsaved text, a
+hover before and after an edit, and the definition, references and signature
+of a call.
 
 ### Limits for now
 
