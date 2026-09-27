@@ -98,95 +98,12 @@ impl Server {
                 if method == "initialize" {
                     return error_reply(id, ErrorCode.InvalidRequest, "initialize was already sent")
                 }
-                val result = self.request(method, body, messages)
-                if result.is_none() { return error_reply(id, ErrorCode.MethodNotFound, "no handler for ${method}") }
-                result_reply(id, (result ?: "").as_str())
+                val reply = self.request(id, method, body, messages)
+                if reply.is_none() { return error_reply(id, ErrorCode.MethodNotFound, "no handler for ${method}") }
+                reply ?: String.from("")
             }
             ShuttingDown => error_reply(id, ErrorCode.InvalidRequest, "the server is shutting down")
         }
-    }
-
-    /// The result of a request about a document; `null` for a method that
-    /// is not one. A file the compiler cannot answer about gets an empty
-    /// result.
-    mutating fun request(method: str, body: str, messages: &var List<String>): String? {
-        val empty = when method {
-            "textDocument/documentSymbol" => "[]"
-            "textDocument/foldingRange" => "[]"
-            "textDocument/selectionRange" => "[]"
-            "textDocument/hover" => "null"
-            "textDocument/definition" => "null"
-            "textDocument/references" => "[]"
-            "textDocument/signatureHelp" => "null"
-            _ => ""
-        }
-        if empty.is_empty() { return null }
-        val uri = string_at(body, "params.textDocument.uri") ?: return Option.Some(String.from(empty))
-        val path = uri_to_path(uri.as_str()) ?: return Option.Some(String.from(empty))
-        if !self.ensure_compiler(messages) { return Option.Some(String.from(empty)) }
-        val text = self.text_for(path.as_str())
-        val result = when method {
-            "textDocument/documentSymbol" => {
-                val answer = self.ask_compiler("symbols", staged_params(path.as_str(), null).as_str(), messages) ?: ""
-                lsp_symbols(answer.as_str(), text.as_str(), self.utf8)
-            }
-            "textDocument/foldingRange" => {
-                val answer = self.ask_compiler("folding", staged_params(path.as_str(), null).as_str(), messages) ?: ""
-                lsp_folding(answer.as_str(), text.as_str(), self.utf8)
-            }
-            "textDocument/selectionRange" => self.selection_ranges(body, path.as_str(), text.as_str(), messages)
-            "textDocument/hover" => {
-                val answer = self.ask_at("hover", body, path.as_str(), text.as_str(), messages) ?: ""
-                lsp_hover(answer.as_str(), text.as_str(), self.utf8)
-            }
-            "textDocument/definition" => {
-                val answer = self.ask_at("references", body, path.as_str(), text.as_str(), messages) ?: ""
-                lsp_definition(answer.as_str(), &self.file_texts(), self.utf8)
-            }
-            "textDocument/references" => {
-                val answer = self.ask_at("references", body, path.as_str(), text.as_str(), messages) ?: ""
-                val with_declaration = bool_at(body, "params.context.includeDeclaration") ?: false
-                lsp_references(answer.as_str(), with_declaration, &self.file_texts(), self.utf8)
-            }
-            _ => {
-                val answer = self.ask_at("signature", body, path.as_str(), text.as_str(), messages) ?: ""
-                lsp_signature_help(answer.as_str())
-            }
-        }
-        return Option.Some(result)
-    }
-
-    /// The compiler's answer to a typed `question` about the position the
-    /// request names.
-    mutating fun ask_at(question: str, body: str, path: str, text: str, messages: &var List<String>): String? {
-        val project = self.project?.clone() ?: return null
-        val entry = project.crate_for(path) ?: return null
-        val line = int_at(body, "params.position.line") ?: 0
-        val character = int_at(body, "params.position.character") ?: 0
-        val offset = offset_of(text, line as uint64, character as uint64, self.utf8)
-        val params = "{\"path\":${path.json_quoted()},\"offset\":${offset},\"crates\":${project.typed_crates(&entry)}}"
-        return self.ask_compiler(question, params.as_str(), messages)
-    }
-
-    /// Open documents' text, else what is on disk: what positions in other
-    /// files are counted in.
-    fun file_texts(): TextSource {
-        return TextSource { documents: self.documents.clone() }
-    }
-
-    /// One chain per requested position, in the order they came.
-    mutating fun selection_ranges(body: str, path: str, text: str, messages: &var List<String>): String {
-        val positions = positions_at(body)
-        var writer = JsonWriter.new()
-        writer.begin_array()
-        while at in &positions {
-            val offset = offset_of(text, at.line, at.character, self.utf8)
-            val params = "{\"path\":${path.json_quoted()},\"offset\":${offset}}"
-            val answer = self.ask_compiler("selection", params.as_str(), messages) ?: ""
-            writer.write_raw(lsp_selection(answer.as_str(), text, offset, self.utf8).as_str())
-        }
-        writer.end_array()
-        return writer.finish()
     }
 
     /// A file's open text, else what is on disk.
@@ -227,6 +144,18 @@ impl Server {
         writer.field_bool("definitionProvider", true)
         writer.field_bool("referencesProvider", true)
         writer.field_raw("signatureHelpProvider", "{\"triggerCharacters\":[\"(\",\",\"]}")
+        writer.field_raw("completionProvider", "{\"triggerCharacters\":[\".\"]}")
+        writer.field_bool("inlayHintProvider", true)
+        writer.key("semanticTokensProvider")
+        writer.begin_object()
+        writer.key("legend")
+        writer.begin_object()
+        writer.field_raw("tokenTypes", token_legend().as_str())
+        writer.field_raw("tokenModifiers", "[]")
+        writer.end_object()
+        writer.field_bool("full", true)
+        writer.end_object()
+        writer.field_raw("renameProvider", "{\"prepareProvider\":true}")
         writer.end_object()
         writer.key("serverInfo")
         writer.begin_object()

@@ -6,6 +6,7 @@ import json.reader.*
 import json.writer.*
 
 /// A span of bytes in a file, as the compiler reports one.
+@derive(Clone)
 struct FileSpan {
     val file: String
     val start: uint64

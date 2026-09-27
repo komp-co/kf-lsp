@@ -58,3 +58,11 @@ fun offsets_and_positions_agree(): void {
     val at = position_of(text, 27, false)
     assert_eq(offset_of(text, at.line, at.character, false), 27, "a round trip")
 }
+
+@test
+fun a_walker_counts_on_from_the_last_offset(): void {
+    var walker = PositionWalker.new()
+    val _first = walker.advance_to("ab\ncd", 1, true)
+    val second = walker.advance_to("ab\ncd", 4, true)
+    assert_eq(second.character, 1, "d's column on the second line")
+}
