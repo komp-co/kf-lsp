@@ -81,6 +81,20 @@ def main():
     published = until(lambda m: m.get("method") == "textDocument/publishDiagnostics")["params"]
     expect("typing is checked once, from the unsaved text", published["diagnostics"] == [])
 
+    document = {"textDocument": {"uri": uri}}
+    send({"id": 10, "method": "textDocument/documentSymbol", "params": document})
+    symbols = until(lambda m: m.get("id") == 10)["result"]
+    expect("the outline names main, from the unsaved text",
+           [s["name"] for s in symbols] == ["main"] and symbols[0]["range"]["end"] == {"line": 3, "character": 1})
+    send({"id": 11, "method": "textDocument/foldingRange", "params": document})
+    expect("main folds from its first line to its last",
+           until(lambda m: m.get("id") == 11)["result"] == [{"startLine": 0, "endLine": 3, "kind": "region"}])
+    send({"id": 12, "method": "textDocument/selectionRange",
+          "params": {"textDocument": {"uri": uri}, "positions": [{"line": 1, "character": 19}]}})
+    chain = until(lambda m: m.get("id") == 12)["result"][0]
+    expect("selection grows from the literal to the declaration",
+           chain["range"]["start"] == {"line": 1, "character": 19} and chain["parent"]["range"]["start"] == {"line": 0, "character": 0})
+
     send({"id": 2, "method": "textDocument/hover", "params": {}})
     expect("an unknown request is MethodNotFound",
            until(lambda m: m.get("id") == 2)["error"]["code"] == -32601)

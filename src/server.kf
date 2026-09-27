@@ -2,6 +2,7 @@
 // to it.
 
 import alloc.list.*
+import json.quote.*
 import json.reader.*
 import json.writer.*
 import std.fs.read_to_string
@@ -71,13 +72,16 @@ impl Server {
         }
         if method.is_empty() { return Outcome { messages: messages, exit_code: null } }
         when (message.id) {
-            Some(id) => messages.push(self.answer(id.as_str(), method.as_str(), body))
+            Some(id) => {
+                val reply = self.answer(id.as_str(), method.as_str(), body, &var messages)
+                messages.push(reply)
+            }
             None => self.notified(method.as_str(), body, &var messages)
         }
         return Outcome { messages: messages, exit_code: null }
     }
 
-    mutating fun answer(id: str, method: str, body: str): String {
+    mutating fun answer(id: str, method: str, body: str, messages: &var List<String>): String {
         return when (self.phase) {
             Starting => {
                 if method != "initialize" {
@@ -94,9 +98,61 @@ impl Server {
                 if method == "initialize" {
                     return error_reply(id, ErrorCode.InvalidRequest, "initialize was already sent")
                 }
-                error_reply(id, ErrorCode.MethodNotFound, "no handler for ${method}")
+                val outline = self.outline(method, body, messages)
+                if outline.is_none() { return error_reply(id, ErrorCode.MethodNotFound, "no handler for ${method}") }
+                result_reply(id, (outline ?: "").as_str())
             }
             ShuttingDown => error_reply(id, ErrorCode.InvalidRequest, "the server is shutting down")
+        }
+    }
+
+    /// The result of an outline request; `null` for a method that is not
+    /// one. A file the compiler cannot answer about gets an empty result.
+    mutating fun outline(method: str, body: str, messages: &var List<String>): String? {
+        val empty = when method {
+            "textDocument/documentSymbol" => "[]"
+            "textDocument/foldingRange" => "[]"
+            "textDocument/selectionRange" => "[]"
+            _ => ""
+        }
+        if empty.is_empty() { return null }
+        val uri = string_at(body, "params.textDocument.uri") ?: return Option.Some(String.from(empty))
+        val path = uri_to_path(uri.as_str()) ?: return Option.Some(String.from(empty))
+        if !self.ensure_compiler(messages) { return Option.Some(String.from(empty)) }
+        val text = self.text_for(path.as_str())
+        if method == "textDocument/selectionRange" {
+            return Option.Some(self.selection_ranges(body, path.as_str(), text.as_str(), messages))
+        }
+        val question = if method == "textDocument/documentSymbol" { "symbols" } else { "folding" }
+        val answer = self.ask_compiler(question, staged_params(path.as_str(), null).as_str(), messages) ?: ""
+        if question == "symbols" { return Option.Some(lsp_symbols(answer.as_str(), text.as_str(), self.utf8)) }
+        return Option.Some(lsp_folding(answer.as_str(), text.as_str(), self.utf8))
+    }
+
+    /// One chain per requested position, in the order they came.
+    mutating fun selection_ranges(body: str, path: str, text: str, messages: &var List<String>): String {
+        val positions = positions_at(body)
+        var writer = JsonWriter.new()
+        writer.begin_array()
+        while at in &positions {
+            val offset = offset_of(text, at.line, at.character, self.utf8)
+            val params = "{\"path\":${path.json_quoted()},\"offset\":${offset}}"
+            val answer = self.ask_compiler("selection", params.as_str(), messages) ?: ""
+            writer.write_raw(lsp_selection(answer.as_str(), text, offset, self.utf8).as_str())
+        }
+        writer.end_array()
+        return writer.finish()
+    }
+
+    /// A file's open text, else what is on disk.
+    fun text_for(path: str): String {
+        when (self.documents.text_at(path)) {
+            Some(text) => return text.clone()
+            None => {}
+        }
+        return when (read_to_string(path)) {
+            Ok(text) => text.clone()
+            Err(_error) => String.from("")
         }
     }
 
@@ -119,6 +175,9 @@ impl Server {
         writer.field_int64("change", 1)
         writer.field_raw("save", "{\"includeText\":false}")
         writer.end_object()
+        writer.field_bool("documentSymbolProvider", true)
+        writer.field_bool("foldingRangeProvider", true)
+        writer.field_bool("selectionRangeProvider", true)
         writer.end_object()
         writer.key("serverInfo")
         writer.begin_object()
@@ -285,6 +344,29 @@ fun staged_params(path: str, text: String?): String {
         None => {}
     }
     return writer.finish()
+}
+
+/// Every `params.positions` entry.
+fun positions_at(body: str): List<Position> {
+    var out = List.new<Position>()
+    var reader = value_at(body, "params.positions") ?: return out
+    if !reader.begin_array() { return out }
+    while reader.array_has_next() {
+        var line: uint64 = 0
+        var character: uint64 = 0
+        if reader.begin_object() {
+            while reader.object_has_next() {
+                val key = reader.read_key()
+                when key.as_str() {
+                    "line" => line = reader.read_uint64()
+                    "character" => character = reader.read_uint64()
+                    _ => reader.skip_value()
+                }
+            }
+        }
+        out.push(Position { line: line, character: character })
+    }
+    return out
 }
 
 /// The text of a full-document change: the last entry of `contentChanges`.

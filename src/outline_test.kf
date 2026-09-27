@@ -1,0 +1,57 @@
+import core.assert.assert_eq
+
+fun source(): str {
+    return "struct P {\n    x: int32\n}\n"
+}
+
+@test
+fun a_symbol_keeps_its_children(): void {
+    val answer = String.from("{\"id\":1,\"result\":{\"symbols\":[") +
+        "{\"name\":\"P\",\"kind\":\"struct\",\"detail\":\"\"," +
+        "\"byte_start\":0,\"byte_end\":25,\"children\":[{\"name\":\"x\",\"kind\":\"field\",\"detail\":\"int32\"," +
+        "\"byte_start\":15,\"byte_end\":16,\"children\":[]}]}]}}"
+    val expected = String.from("[{\"name\":\"P\",\"kind\":23,\"range\":{\"start\":{\"line\":0,\"character\":0},") +
+        "\"end\":{\"line\":2,\"character\":1}},\"selectionRange\":{\"start\":{\"line\":0,\"character\":0}," +
+        "\"end\":{\"line\":2,\"character\":1}},\"children\":[{\"name\":\"x\",\"detail\":\"int32\",\"kind\":8," +
+        "\"range\":{\"start\":{\"line\":1,\"character\":4},\"end\":{\"line\":1,\"character\":5}}," +
+        "\"selectionRange\":{\"start\":{\"line\":1,\"character\":4},\"end\":{\"line\":1,\"character\":5}}," +
+        "\"children\":[]}]}]"
+    assert_eq(lsp_symbols(answer.as_str(), source(), false).as_str(), expected.as_str(), "nested, in lines")
+}
+
+@test
+fun an_error_answer_has_no_symbols(): void {
+    val answer = "{\"id\":1,\"error\":{\"code\":\"no_such_file\",\"message\":\"x\"}}"
+    assert_eq(lsp_symbols(answer, source(), false).as_str(), "[]", "empty")
+}
+
+@test
+fun a_range_over_lines_folds(): void {
+    val answer = "{\"id\":2,\"result\":{\"ranges\":[{\"byte_start\":0,\"byte_end\":25,\"kind\":\"region\"}]}}"
+    assert_eq(lsp_folding(answer, source(), false).as_str(), "[{\"startLine\":0,\"endLine\":2,\"kind\":\"region\"}]",
+              "lines 0 to 2")
+}
+
+@test
+fun a_range_on_one_line_does_not_fold(): void {
+    val answer = "{\"id\":2,\"result\":{\"ranges\":[{\"byte_start\":0,\"byte_end\":8,\"kind\":\"imports\"}]}}"
+    assert_eq(lsp_folding(answer, source(), false).as_str(), "[]", "nothing to collapse")
+}
+
+@test
+fun selection_links_each_range_to_its_parent(): void {
+    val answer = String.from("{\"id\":3,\"result\":{\"ranges\":[") +
+        "{\"byte_start\":15,\"byte_end\":16},{\"byte_start\":0,\"byte_end\":25}]}}"
+    val expected = String.from("{\"range\":{\"start\":{\"line\":1,\"character\":4},") +
+        "\"end\":{\"line\":1,\"character\":5}}," +
+        "\"parent\":{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":2,\"character\":1}}}}"
+    val chain = lsp_selection(answer.as_str(), source(), 15, false)
+    assert_eq(chain.as_str(), expected.as_str(), "innermost, then its parent")
+}
+
+@test
+fun no_selection_is_an_empty_range_at_the_offset(): void {
+    val answer = "{\"id\":3,\"result\":{\"ranges\":[]}}"
+    assert_eq(lsp_selection(answer, source(), 11, false).as_str(),
+              "{\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":0}}}", "empty")
+}
