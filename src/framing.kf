@@ -1,0 +1,76 @@
+// The base protocol's wire format: header lines, a blank line, then exactly
+// Content-Length bytes of JSON.
+
+import std.reader.Reader
+
+/// Takes whole messages off a reader as they complete, keeping its place
+/// across a message that has only partly arrived.
+pub struct Framer {
+    /// The length the current header block named, once it has.
+    var named: uint64?
+    /// Set when the header block has ended: the body's length.
+    var body: uint64?
+}
+
+impl Framer {
+    pub static fun new(): Framer {
+        return Framer { named: null, body: null }
+    }
+
+    /// The next complete body from what `reader` has buffered; `null` until
+    /// one is whole. Never blocks. A header block naming no length drops its
+    /// message, since nothing after it can be framed otherwise.
+    pub mutating fun take(reader: &var Reader): String? {
+        while true {
+            when (self.body) {
+                Some(length) => {
+                    val bytes = reader.take_bytes(length)
+                    if bytes.is_none() { return null }
+                    self.body = null
+                    if (bytes?.byte_len() ?: 0) < length { return null }
+                    return bytes
+                }
+                None => {}
+            }
+            val line = reader.take_line() ?: return null
+            val header = line.as_str().trim_end()
+            if header.is_empty() {
+                self.body = self.named
+                self.named = null
+            } else {
+                val length = content_length(header.as_str())
+                if length.is_some() { self.named = length }
+            }
+        }
+        return null
+    }
+}
+
+/// The length a `Content-Length` header names; `null` for any other header
+/// or a value that is not a decimal number. Header names ignore case.
+pub fun content_length(header: str): uint64? {
+    val name = "content-length:"
+    if header.byte_len() < name.byte_len() { return null }
+    while i in 0..name.byte_len() {
+        if header.byte(i).ascii_lower() != name.byte(i) { return null }
+    }
+    val digits = header.substring(name.byte_len(), header.byte_len()).trim()
+    if digits.is_empty() { return null }
+    var value: uint64 = 0
+    while d in 0..digits.byte_len() {
+        val byte = digits.byte(d)
+        if byte < 48 || byte > 57 { return null }
+        value = value * 10 + ((byte - 48) as uint64)
+    }
+    return Option.Some(value)
+}
+
+/// `body` with the header block in front of it.
+pub fun framed(body: str): String {
+    return "Content-Length: ${body.byte_len()}\r\n\r\n${body}"
+}
+
+fun uint8.ascii_lower(): uint8 {
+    if self >= 65 && self <= 90 { return self + 32 }
+    return self
+}

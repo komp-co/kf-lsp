@@ -1,0 +1,30 @@
+// Where a byte offset falls, as LSP counts it: a zero-based line, and a
+// character within it in the negotiated encoding.
+
+pub struct Position {
+    pub val line: uint64
+    pub val character: uint64
+}
+
+/// `utf8` counts bytes; otherwise UTF-16 code units, LSP's default, where a
+/// character outside the Basic Multilingual Plane counts two. An offset
+/// past the end is the end.
+pub fun position_of(text: str, offset: uint64, utf8: bool): Position {
+    var line: uint64 = 0
+    var character: uint64 = 0
+    val end = if offset < text.byte_len() { offset } else { text.byte_len() }
+    while i in 0..end {
+        val byte = text.byte(i)
+        if byte == 10 {
+            line = line + 1
+            character = 0
+        } else if utf8 {
+            character = character + 1
+        } else if byte < 128 || (byte >= 192 && byte < 240) {
+            character = character + 1
+        } else if byte >= 240 {
+            character = character + 2
+        }
+    }
+    return Position { line: line, character: character }
+}

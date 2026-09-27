@@ -1,0 +1,8 @@
+# Written by komp: the exact source of every fetched dependency.
+schema = 1
+
+[[package]]
+name = "json"
+version = "0.2.0"
+source = { git = "https://github.com/komp-co/json.git", rev = "44a09fc776814a7aa1871619f1c1b5786a9d5b43" }
+index = "https://github.com/komp-co/index"

@@ -1,0 +1,9 @@
+[project]
+name = "kflat_lsp"
+version = "0.1.0"
+kind = "bin"
+
+[dependencies]
+json = "0.2"
+# The std of the komp beside this checkout; komp#132 is a portable spelling.
+std = { path = "../komp/libs/std" }
