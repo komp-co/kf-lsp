@@ -1,0 +1,24 @@
+import core.assert.assert_eq
+
+@test
+fun an_open_document_is_found_by_path(): void {
+    var documents = Documents.new()
+    documents.open("file:///a.kf", "/a.kf", "one")
+    assert_eq(documents.text_at("/a.kf") ?: "", "one", "its text")
+}
+
+@test
+fun opening_again_replaces_the_text(): void {
+    var documents = Documents.new()
+    documents.open("file:///a.kf", "/a.kf", "one")
+    documents.open("file:///a.kf", "/a.kf", "two")
+    assert_eq(documents.text_at("/a.kf") ?: "", "two", "the latest")
+}
+
+@test
+fun a_closed_document_is_gone(): void {
+    var documents = Documents.new()
+    documents.open("file:///a.kf", "/a.kf", "one")
+    documents.close("file:///a.kf")
+    assert_eq(documents.text_at("/a.kf").is_none(), true, "closed")
+}

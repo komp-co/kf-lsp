@@ -1,0 +1,47 @@
+import core.assert.assert_eq
+
+fun sample(): Project {
+    val text = String.from("{\"schema\":1,\"kflatc\":\"/k/kflatc\",\"target_dir\":\"/w/target/kflat\",\"crates\":[") +
+        "{\"name\":\"core\",\"root\":\"/k/libs/core\",\"member\":false,\"deps\":[],\"loads\":[],\"lints\":[]}," +
+        "{\"name\":\"app\",\"root\":\"/w/app\",\"member\":true,\"loads\":[\"core\",\"alloc\"]," +
+        "\"lints\":[\"dead_code=allow\"]}," +
+        "{\"name\":\"inner\",\"root\":\"/w/app/inner\",\"member\":true,\"loads\":[],\"lints\":[]}]}"
+    return parse_metadata(text.as_str()) ?: Project { kflatc: "", target_dir: "", crates: List.new<CrateEntry>() }
+}
+
+@test
+fun metadata_names_the_compiler_and_target(): void {
+    val project = sample()
+    assert_eq(project.kflatc.as_str() == "/k/kflatc" && project.target_dir.as_str() == "/w/target/kflat", true, "both")
+}
+
+@test
+fun a_file_belongs_to_the_member_whose_root_holds_it(): void {
+    assert_eq(sample().crate_for("/w/app/src/main.kf")?.name ?: "", "app", "app")
+}
+
+@test
+fun the_deepest_root_wins(): void {
+    assert_eq(sample().crate_for("/w/app/inner/src/lib.kf")?.name ?: "", "inner", "nested member")
+}
+
+@test
+fun a_file_in_no_member_has_no_crate(): void {
+    assert_eq(sample().crate_for("/k/libs/core/src/lib.kf").is_none(), true, "core is not a member")
+}
+
+@test
+fun a_root_is_not_a_prefix_of_its_sibling(): void {
+    assert_eq(sample().crate_for("/w/application/src/a.kf").is_none(), true, "/w/app is not /w/application")
+}
+
+@test
+fun check_params_carry_the_crate(): void {
+    val project = sample()
+    val app = project.crate_named("app") ?: CrateEntry {
+        name: "", root: "", member: false, loads: List.new<String>(), lints: List.new<String>()
+    }
+    val expected = String.from("{\"target_dir\":\"/w/target/kflat\",\"crate\":{\"name\":\"app\",\"root\":\"/w/app\",") +
+        "\"loads\":[\"core\",\"alloc\"],\"lints\":[\"dead_code=allow\"]}}"
+    assert_eq(project.check_params(&app).as_str(), expected.as_str(), "the metadata row")
+}

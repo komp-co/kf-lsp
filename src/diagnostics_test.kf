@@ -1,0 +1,56 @@
+import core.assert.assert_eq
+
+struct FixedText {
+    val text: String
+}
+
+impl FileText for FixedText {
+    fun text_of(path: str): String { return self.text.clone() }
+}
+
+fun answer(): String {
+    return String.from("{\"id\":4,\"result\":{\"errors\":1,\"diagnostics\":[") +
+        "{\"schema_version\":3,\"severity\":\"error\",\"code\":null,\"message\":\"bad\"," +
+        "\"byte_start\":4,\"byte_end\":6,\"file\":\"/w/a.kf\",\"line\":2," +
+        "\"column\":2,\"secondary\":[],\"fix\":null}," +
+        "{\"severity\":\"warning\",\"code\":\"dead_code\",\"message\":\"unused\"," +
+        "\"byte_start\":0,\"byte_end\":1,\"file\":\"/w/a.kf\"}]}}"
+}
+
+@test
+fun diagnostics_are_grouped_by_file(): void {
+    val text = FixedText { text: "ab\ncdef" }
+    val files = diagnostics_by_file(answer().as_str(), false, &text) ?: List.new<FileDiagnostics>()
+    assert_eq(files.size() == 1 && files[0].items.size() == 2, true, "one file, two diagnostics")
+}
+
+@test
+fun a_range_is_counted_from_the_byte_offsets(): void {
+    val text = FixedText { text: "ab\ncdef" }
+    val files = diagnostics_by_file(answer().as_str(), false, &text) ?: List.new<FileDiagnostics>()
+    val expected = String.from("{\"range\":{\"start\":{\"line\":1,\"character\":1},") +
+        "\"end\":{\"line\":1,\"character\":3}}," +
+        "\"severity\":1,\"source\":\"kflatc\",\"message\":\"bad\"}"
+    assert_eq(files[0].items[0].as_str(), expected.as_str(), "line 2, from the second character")
+}
+
+@test
+fun a_lint_keeps_its_code(): void {
+    val text = FixedText { text: "ab\ncdef" }
+    val files = diagnostics_by_file(answer().as_str(), false, &text) ?: List.new<FileDiagnostics>()
+    assert_eq(files[0].items[1].as_str().contains("\"severity\":2,\"code\":\"dead_code\""), true, "a warning")
+}
+
+@test
+fun an_error_answer_is_no_diagnostics(): void {
+    val text = FixedText { text: "" }
+    val answer = "{\"id\":4,\"error\":{\"code\":\"check_failed\",\"message\":\"x\"}}"
+    assert_eq(diagnostics_by_file(answer, false, &text).is_none(), true, "not a result")
+}
+
+@test
+fun publishing_names_the_file_by_uri(): void {
+    val items = List.new<String>()
+    val sent = publish("/w/a.kf", &items)
+    assert_eq(sent.as_str().contains("\"uri\":\"file:///w/a.kf\",\"diagnostics\":[]"), true, "an empty list clears")
+}

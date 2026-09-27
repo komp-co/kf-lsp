@@ -1,0 +1,51 @@
+// `kflatc serve` as a child process: one request line out, one answer line
+// back.
+
+import alloc.list.*
+import json.writer.*
+import std.fs.is_file
+import std.process.Child
+import std.process.Command
+import std.reader.Reader
+
+pub struct Compiler {
+    var child: Child
+    var answers: Reader
+    var next_id: int64
+}
+
+/// Starts `kflatc serve`, greets it and adds it to `into`: "" when it is
+/// running, else what went wrong.
+///
+/// CONSTRAINT: `spawn()` is unwrapped where it is called. A `Child` is not
+/// `Clone`, and unwrapping a named `Result` of one copies it, so the copy
+/// left behind would kill the process when it goes out of scope.
+pub fun start_compiler(kflatc: str, into: &var List<Compiler>): String {
+    if !is_file(kflatc) { return "there is no ${kflatc} to run" }
+    var command = Command.new(kflatc)
+    command.arg("serve")
+    var child = command.spawn().unwrap()
+    val answers = Reader.new(child.stdout.take())
+    into.push(Compiler { child: child, answers: answers, next_id: 1 })
+    val at = into.size() - 1
+    val hello = into[at].request("hello", "{\"protocol\":1}") ?: ""
+    if hello.as_str().contains("\"result\"") { return "" }
+    val _stopped = into.pop()
+    if hello.is_empty() { return "${kflatc} serve exited" }
+    return "${kflatc} serve refused: ${hello}"
+}
+
+impl Compiler {
+    /// The answer line to `method`; `null` once the compiler has gone.
+    /// `params` is JSON text, or "" for none.
+    pub mutating fun request(method: str, params: str): String? {
+        val writer = JsonWriter.object()
+        writer.field_int64("id", self.next_id)
+        writer.field_string("method", method)
+        if !params.is_empty() { writer.field_raw("params", params) }
+        self.next_id = self.next_id + 1
+        val line = "${writer.finish()}\n"
+        if self.child.stdin.write(line.as_str()).is_err() { return null }
+        return self.answers.read_line()
+    }
+}
