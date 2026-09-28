@@ -162,7 +162,7 @@ impl Server {
         writer.end_object()
         writer.key("serverInfo")
         writer.begin_object()
-        writer.field_string("name", "kflat-lsp")
+        writer.field_string("name", "komp-lsp")
         writer.end_object()
         return writer.finish()
     }

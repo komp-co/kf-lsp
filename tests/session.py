@@ -16,7 +16,7 @@ import tempfile
 
 def main():
     server = os.path.realpath(sys.argv[1])
-    project = tempfile.mkdtemp(prefix="kflat-lsp-session-")
+    project = tempfile.mkdtemp(prefix="komp-lsp-session-")
     os.makedirs(os.path.join(project, "src"))
     with open(os.path.join(project, "kf.toml"), "w") as manifest:
         manifest.write('[project]\nname = "session"\nversion = "0.1.0"\nkind = "bin"\n')

@@ -1,13 +1,13 @@
 <img src="https://raw.githubusercontent.com/komp-co/kf-extensions/main/brand/kiwi.svg" width="96" alt="The KFlat paper kiwi">
 
-# kflat-lsp
+# kf-lsp
 
-The KFlat language server, `kflat_lsp`, written in KFlat. It keeps one
-`kflatc serve` running and hands it the editor's unsaved text, so every
-answer follows typing instead of saves. It answers diagnostics, quick fixes,
-document symbols, folding ranges, selection ranges, hover, go-to-definition,
-find-references, signature help, completion, inlay hints, semantic tokens
-and rename.
+The KFlat language server, written in KFlat and published to the package
+index as `komp_lsp`. It keeps one `kflatc serve` running and hands it the
+editor's unsaved text, so every answer follows typing instead of saves. It
+answers diagnostics, quick fixes, document symbols, folding ranges, selection
+ranges, hover, go-to-definition, find-references, signature help, completion,
+inlay hints, semantic tokens and rename.
 
 It talks to the compiler only through `kflatc serve`, whose protocol is
 stable (the KFlat book's "The compiler as a service" chapter), never through
@@ -28,23 +28,32 @@ published, and cleared when a later check no longer reports them. It negotiates
 `positionEncoding: utf-8` when the client offers it, and counts UTF-16 code
 units otherwise.
 
+## Installing it
+
+```sh
+komp install komp_lsp
+```
+
+An editor then starts `komp lsp` in the project's directory, and talks LSP to
+it over stdio. komp runs the version the project's `[tools]` table pins, else
+the installed one, and hands its process to it, so stopping the server leaves
+nothing behind. The server asks the komp that started it about the project
+(`KOMP_BIN` overrides that, `komp` on `PATH` otherwise).
+
 ## Building it
 
 Build it with an installed kflat: a release from 0.5.1 on, the version in
 `kflat-version` being the one CI builds with.
 
 ```sh
-komp build .        # target/kflat/kflat_lsp
+komp build .        # target/kflat/komp_lsp
 ```
-
-Run it with `KOMP_BIN` naming that komp (`komp` on `PATH` otherwise). It
-speaks LSP over stdio.
 
 ## Testing it
 
 ```sh
 komp test .
-python3 tests/session.py target/kflat/kflat_lsp
+python3 tests/session.py target/kflat/komp_lsp
 ```
 
 `tests/session.py` drives one editor session end to end: an error published
@@ -62,12 +71,8 @@ vim.filetype.add({ extension = { kf = "kflat" } })
 vim.api.nvim_create_autocmd("FileType", {
   pattern = "kflat",
   callback = function(args)
-    vim.lsp.start({
-      name = "kflat-lsp",
-      cmd = { vim.fn.expand("~/path/to/kf-lsp/target/kflat/kflat_lsp") },
-      root_dir = vim.fs.root(args.buf, "kf.toml"),
-      cmd_env = { KOMP_BIN = vim.fn.expand("~/.kflat/bin/komp") },
-    })
+    local root = vim.fs.root(args.buf, "kf.toml")
+    vim.lsp.start({ name = "komp-lsp", cmd = { "komp", "lsp" }, cmd_cwd = root, root_dir = root })
   end,
 })
 ```

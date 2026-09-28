@@ -31,7 +31,7 @@ pub struct Project {
 /// Runs `komp metadata` on `root`; `null`, with `failure` saying why, when
 /// there is no project.
 pub fun load_project(komp: str, root: str, failure: &var String): Project? {
-    val scratch = TempDir.new("kflat-lsp")
+    val scratch = TempDir.new("komp-lsp")
     val output = "${scratch.path().as_str()}/metadata.json"
     var command = Command.new(komp)
     command.arg("metadata")

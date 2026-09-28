@@ -49,4 +49,4 @@ jobs:
       - name: An editor session against the built server
         run: |
           komp build .
-          python3 tests/session.py target/kflat/kflat_lsp
+          python3 tests/session.py target/kflat/komp_lsp
