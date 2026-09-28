@@ -15,7 +15,10 @@ pub struct CrateEntry {
     pub val root: String
     pub val member: bool
     pub val loads: List<String>
+    /// `name=level` rows.
     pub val lints: List<String>
+    /// `name.key=value` rows.
+    pub val lint_options: List<String>
 }
 
 @derive(Clone)
@@ -77,6 +80,7 @@ fun read_crate(reader: &var JsonReader): CrateEntry {
     var member = false
     var loads = List.new<String>()
     var lints = List.new<String>()
+    var lint_options = List.new<String>()
     if reader.begin_object() {
         while reader.object_has_next() {
             val key = reader.read_key()
@@ -85,12 +89,62 @@ fun read_crate(reader: &var JsonReader): CrateEntry {
                 "root" => root = reader.read_string()
                 "member" => member = reader.read_bool()
                 "loads" => loads = read_strings(reader)
-                "lints" => lints = read_strings(reader)
+                "lints" => lints = read_lint_rows(reader)
+                "lint_options" => lint_options = read_option_rows(reader)
                 _ => reader.skip_value()
             }
         }
     }
-    return CrateEntry { name: name, root: root, member: member, loads: loads, lints: lints }
+    return CrateEntry { name: name, root: root, member: member, loads: loads, lints: lints, lint_options: lint_options }
+}
+
+/// `{"name", "level"}` objects, as `komp metadata` lists them, or `name=level` strings.
+fun read_lint_rows(reader: &var JsonReader): List<String> {
+    var out = List.new<String>()
+    if !reader.begin_array() { return out }
+    while reader.array_has_next() {
+        if reader.peek_kind() != JsonKind.Object {
+            out.push(reader.read_string())
+            continue
+        }
+        val fields = read_string_fields(reader)
+        out.push("${fields.name}=${fields.level}")
+    }
+    return out
+}
+
+/// `{"name", "key", "value"}` objects as `name.key=value` rows.
+fun read_option_rows(reader: &var JsonReader): List<String> {
+    var out = List.new<String>()
+    if !reader.begin_array() { return out }
+    while reader.array_has_next() {
+        val fields = read_string_fields(reader)
+        out.push("${fields.name}.${fields.key}=${fields.value}")
+    }
+    return out
+}
+
+struct LintFields {
+    var name: String
+    var level: String
+    var key: String
+    var value: String
+}
+
+fun read_string_fields(reader: &var JsonReader): LintFields {
+    var fields = LintFields { name: String.from(""), level: String.from(""), key: String.from(""), value: String.from("") }
+    if !reader.begin_object() { return fields }
+    while reader.object_has_next() {
+        val field = reader.read_key()
+        when field.as_str() {
+            "name" => fields.name = reader.read_string()
+            "level" => fields.level = reader.read_string()
+            "key" => fields.key = reader.read_string()
+            "value" => fields.value = reader.read_string()
+            _ => reader.skip_value()
+        }
+    }
+    return fields
 }
 
 fun read_strings(reader: &var JsonReader): List<String> {
@@ -137,7 +191,7 @@ impl Project {
 
     /// `kflatc serve`'s `check` params for `entry`.
     pub fun check_params(entry: &CrateEntry): String {
-        val writer = JsonWriter.object()
+        var writer = JsonWriter.object()
         writer.field_string("target_dir", self.target_dir.as_str())
         writer.key("crate")
         writer.begin_object()
@@ -151,6 +205,10 @@ impl Project {
         writer.begin_array()
         while lint in &entry.lints { writer.write_string(lint.as_str()) }
         writer.end_array()
+        writer.key("lint_options")
+        writer.begin_array()
+        while row in &entry.lint_options { writer.write_option_row(row.as_str()) }
+        writer.end_array()
         writer.end_object()
         return writer.finish()
     }
@@ -160,5 +218,16 @@ mutating fun JsonWriter.write_crate_source(entry: &CrateEntry): void {
     self.begin_object()
     self.field_string("name", entry.name.as_str())
     self.field_string("root", entry.root.as_str())
+    self.end_object()
+}
+
+/// A `name.key=value` row as the `{"name", "key", "value"}` object it was read from.
+mutating fun JsonWriter.write_option_row(row: str): void {
+    val dot = row.index_of(".") ?: return
+    val eq = row.index_of("=") ?: return
+    self.begin_object()
+    self.field_string("name", row.substring(0, dot).as_str())
+    self.field_string("key", row.substring(dot + 1, eq).as_str())
+    self.field_string("value", row.substring(eq + 1, row.byte_len()).as_str())
     self.end_object()
 }
