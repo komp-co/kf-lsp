@@ -110,7 +110,7 @@ mutating fun Server.ask_typed(question: str, path: str, offset: int64, new_name:
                               messages: &var List<String>): String? {
     val project = self.project?.clone() ?: return null
     val entry = project.crate_for(path) ?: return null
-    val writer = JsonWriter.object()
+    var writer = JsonWriter.object()
     writer.field_string("path", path)
     if offset >= 0 { writer.field_int64("offset", offset) }
     if !new_name.is_empty() { writer.field_string("new_name", new_name) }

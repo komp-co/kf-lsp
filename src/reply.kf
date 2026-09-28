@@ -25,7 +25,7 @@ pub fun ErrorCode.number(): int64 {
 
 /// `id` and `result` are JSON text.
 pub fun result_reply(id: str, result: str): String {
-    val writer = JsonWriter.object()
+    var writer = JsonWriter.object()
     writer.field_string("jsonrpc", "2.0")
     writer.field_raw("id", id)
     writer.field_raw("result", result)
@@ -34,7 +34,7 @@ pub fun result_reply(id: str, result: str): String {
 
 /// `id` is JSON text: `null` when the request's id could not be read.
 pub fun error_reply(id: str, code: ErrorCode, message: str): String {
-    val writer = JsonWriter.object()
+    var writer = JsonWriter.object()
     writer.field_string("jsonrpc", "2.0")
     writer.field_raw("id", id)
     writer.key("error")
@@ -47,7 +47,7 @@ pub fun error_reply(id: str, code: ErrorCode, message: str): String {
 
 /// A notification: no id, and nothing comes back. `params` is JSON text.
 pub fun notification(method: str, params: str): String {
-    val writer = JsonWriter.object()
+    var writer = JsonWriter.object()
     writer.field_string("jsonrpc", "2.0")
     writer.field_string("method", method)
     writer.field_raw("params", params)
@@ -56,7 +56,7 @@ pub fun notification(method: str, params: str): String {
 
 /// A line in the editor's log; `kind` 1 is an error, 3 information.
 pub fun log_message(kind: int64, message: str): String {
-    val writer = JsonWriter.object()
+    var writer = JsonWriter.object()
     writer.field_int64("type", kind)
     writer.field_string("message", "kflat-lsp: ${message}")
     return notification("window/logMessage", writer.finish().as_str())
