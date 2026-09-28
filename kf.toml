@@ -1,5 +1,6 @@
 [project]
-name = "kflat_lsp"
+name = "komp_lsp"
+description = "The KFlat language server; editors start it with `komp lsp`"
 version = "0.1.0"
 kind = "bin"
 

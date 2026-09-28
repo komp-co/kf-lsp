@@ -58,6 +58,6 @@ pub fun notification(method: str, params: str): String {
 pub fun log_message(kind: int64, message: str): String {
     var writer = JsonWriter.object()
     writer.field_int64("type", kind)
-    writer.field_string("message", "kflat-lsp: ${message}")
+    writer.field_string("message", "komp-lsp: ${message}")
     return notification("window/logMessage", writer.finish().as_str())
 }
