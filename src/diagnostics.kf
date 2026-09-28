@@ -176,7 +176,7 @@ fun lsp_severity(name: str): int64 {
 
 /// `textDocument/publishDiagnostics` for one file.
 pub fun publish(path: str, items: &List<String>): String {
-    val writer = JsonWriter.object()
+    var writer = JsonWriter.object()
     writer.field_string("uri", path_to_uri(path).as_str())
     writer.key("diagnostics")
     writer.begin_array()

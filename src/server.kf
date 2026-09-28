@@ -129,7 +129,7 @@ impl Server {
         while encoding in &offered {
             if encoding.as_str() == "utf-8" { self.utf8 = true }
         }
-        val writer = JsonWriter.object()
+        var writer = JsonWriter.object()
         writer.key("capabilities")
         writer.begin_object()
         writer.field_string("positionEncoding", if self.utf8 { "utf-8" } else { "utf-16" })
@@ -324,7 +324,7 @@ impl Server {
 
 /// `stage`'s params, or `unstage`'s when there is no text.
 fun staged_params(path: str, text: String?): String {
-    val writer = JsonWriter.object()
+    var writer = JsonWriter.object()
     writer.field_string("path", path)
     when (text) {
         Some(content) => writer.field_string("text", content.as_str())

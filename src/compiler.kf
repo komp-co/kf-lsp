@@ -39,7 +39,7 @@ impl Compiler {
     /// The answer line to `method`; `null` once the compiler has gone.
     /// `params` is JSON text, or "" for none.
     pub mutating fun request(method: str, params: str): String? {
-        val writer = JsonWriter.object()
+        var writer = JsonWriter.object()
         writer.field_int64("id", self.next_id)
         writer.field_string("method", method)
         if !params.is_empty() { writer.field_raw("params", params) }
