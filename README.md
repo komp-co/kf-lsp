@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/komp-co/kf-extensions/main/brand/kiwi.svg" width="96" alt="The KFlat paper kiwi">
+
 # kflat-lsp
 
 The KFlat language server, `kflat_lsp`, written in KFlat. It keeps one
