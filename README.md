@@ -41,21 +41,20 @@ cache has it, and is asked once per session.
 - Hover on a dependency or tool gives its description, the version `kf.lock`
   holds, the newest its requirement allows and the newest in the index; an
   inlay hint after it says the same in a line (`komp outdated`).
-- `kflat` in `[project]` completes the installed toolchains (`komp self list`).
+- `kflat` in `[project]` completes the installed toolchains (`komp toolchain list`).
 - In `lint.toml`, and the `[lint]` table of kf.toml, completion and hover give
   each lint's group, level, description and options, and levels complete in
   values (`komp lint --list`).
 
 Saving a kf.toml, kf.lock or lint.toml asks about its project again, and so
 does a question komp could not answer, such as one to a tool that is not
-installed: it is not asked again until then. This
-needs a komp with `komp outdated` and `komp search --offline`; an older one
-leaves the manifests unanswered.
+installed: it is not asked again until then. A komp older than 0.6.0 leaves
+the manifests unanswered.
 
 ## Installing it
 
 ```sh
-komp install komp_lsp
+komp tool install komp_lsp
 ```
 
 An editor then starts `komp lsp` in the project's directory, and talks LSP to
@@ -79,7 +78,7 @@ each request to the service for its file.
 
 ## Building it
 
-Build it with an installed kflat: a release from 0.5.1 on, the version in
+Build it with an installed kflat: a release from 0.6.0 on, the version in
 `kflat-version` being the one CI builds with.
 
 ```sh

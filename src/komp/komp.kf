@@ -111,7 +111,7 @@ impl Komp {
 
     /// The running komp's version and every installed toolchain's.
     pub fun toolchains(): List<String> {
-        val answer = self.run("self list --format=json", "") ?: return List.new<String>()
+        val answer = self.run("toolchain list --format=json", "") ?: return List.new<String>()
         return parse_toolchains(answer.as_str())
     }
 
