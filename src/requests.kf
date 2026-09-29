@@ -24,6 +24,7 @@ mutating fun Server.request(id: str, method: str, body: str, messages: &var List
         "textDocument/rename" => "null"
         "textDocument/codeAction" => "[]"
         "textDocument/codeLens" => "[]"
+        "textDocument/formatting" => "[]"
         _ => ""
     }
     if empty.is_empty() { return null }

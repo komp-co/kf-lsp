@@ -58,7 +58,8 @@ def main():
             sys.exit(1)
 
     send({"id": 1, "method": "initialize",
-          "params": {"rootUri": "file://" + os.path.realpath(project), "capabilities": {}}})
+          "params": {"rootUri": "file://" + os.path.realpath(project),
+                     "capabilities": {"experimental": {"kflatRunCommands": True}}}})
     answer = until(lambda m: m.get("id") == 1)
     expect("initialize names full-document sync",
            answer["result"]["capabilities"]["textDocumentSync"]["change"] == 1)
@@ -167,6 +168,20 @@ def main():
     expect("the compiler's fix is offered on the line",
            len(actions) == 1 and actions[0]["title"] == "change to `sum`" and edit["newText"] == "sum"
            and edit["range"] == {"start": {"line": 10, "character": 13}, "end": {"line": 10, "character": 17}})
+
+    untidy = "@test\nfun adds(): void {\n  assert_eq(1 + 1,  2, \"sum\")\n}\n\nfun main(): int32 {\n  return 0\n}\n"
+    send({"method": "textDocument/didChange",
+          "params": {"textDocument": {"uri": uri, "version": 20}, "contentChanges": [{"text": untidy}]}})
+    send({"id": 30, "method": "textDocument/codeLens", "params": {"textDocument": {"uri": uri}}})
+    lenses = until(lambda m: m.get("id") == 30)["result"]
+    expect("Test sits on @test and Run on main",
+           [(l["command"]["title"], l["range"]["start"]["line"], l["command"]["arguments"]) for l in lenses]
+           == [("Test", 0, [os.path.realpath(project), "adds"]), ("Run", 5, [os.path.realpath(project)])])
+    send({"id": 31, "method": "textDocument/formatting",
+          "params": {"textDocument": {"uri": uri}, "options": {"tabSize": 4, "insertSpaces": True}}})
+    edits = until(lambda m: m.get("id") == 31)["result"]
+    expect("formatting replaces the text with komp fmt's",
+           len(edits) == 1 and edits[0]["newText"] == untidy.replace("\n  ", "\n    ").replace(",  2", ", 2"))
 
     with open(os.path.join(project, "kf.toml"), "a") as manifest:
         manifest.write("# edited outside the editor\n")

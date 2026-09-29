@@ -7,7 +7,7 @@ index as `komp_lsp`. It keeps one `kflatc serve` running and hands it the
 editor's unsaved text, so every answer follows typing instead of saves. It
 answers diagnostics, quick fixes, document symbols, folding ranges, selection
 ranges, hover, go-to-definition, find-references, signature help, completion,
-inlay hints, semantic tokens and rename.
+inlay hints, semantic tokens, rename, formatting and Run and Test lenses.
 
 It talks to the compiler only through `kflatc serve`, whose protocol is
 stable (the KFlat book's "The compiler as a service" chapter), never through
@@ -27,6 +27,15 @@ line without checking again. Diagnostics for every file of that crate are
 published, and cleared when a later check no longer reports them. It negotiates
 `positionEncoding: utf-8` when the client offers it, and counts UTF-16 code
 units otherwise.
+
+Formatting writes the open text to a scratch file, runs `komp fmt` on it from
+the crate's directory, so the formatter the project pins is the one used, and
+hands back one edit. A client that sets `experimental.kflatRunCommands` in its
+capabilities gets a Run lens above a top-level `fun main` and a Test lens above
+each `@test` function. Their commands are the client's to run in a terminal or
+task: `kflat.run` with the crate's directory (`komp run <dir>`), and
+`kflat.test` with the directory and the test's name
+(`komp test <dir> --case <name>`).
 
 ## kf.toml and lint.toml
 

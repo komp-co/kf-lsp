@@ -124,7 +124,8 @@ impl Server {
         while encoding in &body.strings_at("params.capabilities.general.positionEncodings") {
             if encoding.as_str() == "utf-8" { utf8 = true }
         }
-        self.source.configure(root.as_str(), utf8)
+        val run_lenses = body.bool_at("params.capabilities.experimental.kflatRunCommands") ?: false
+        self.source.configure(root.as_str(), utf8, run_lenses)
         val inlay_refresh = body.bool_at("params.capabilities.workspace.inlayHint.refreshSupport") ?: false
         val watching = "params.capabilities.workspace.didChangeWatchedFiles.dynamicRegistration"
         self.watch_files = body.bool_at(watching) ?: false

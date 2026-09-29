@@ -53,6 +53,7 @@ jobs:
 
       - name: An editor session against the built server
         run: |
+          komp tool install komp_fmt
           komp build .
           python3 tests/session.py target/kflat/komp_lsp
 

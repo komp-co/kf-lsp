@@ -33,6 +33,10 @@ pub struct SourceService {
     var fixes: List<Fix>
     /// The workspace's kf.toml files as the loaded project read them.
     var known_manifests: List<KnownManifest>
+    /// `komp fmt` failed once, and the user was told.
+    var format_failed: bool
+    /// The client runs the Run and Test lenses' commands.
+    var run_lenses: bool
 }
 
 /// Open documents' text, else what is on disk: what positions in the files
@@ -53,14 +57,17 @@ impl SourceService {
         return SourceService {
             komp: String.from(komp), root: String.from(""), utf8: false, project: null,
             compiler: List.new<Compiler>(), dirty: List.new<String>(), edited_at: null,
-            published: List.new<String>(), fixes: List.new<Fix>(), known_manifests: List.new<KnownManifest>()
+            published: List.new<String>(), fixes: List.new<Fix>(), known_manifests: List.new<KnownManifest>(),
+            format_failed: false, run_lenses: false
         }
     }
 
-    /// The workspace, and how the client counts characters.
-    pub mutating fun configure(root: str, utf8: bool): void {
+    /// The workspace, how the client counts characters, and whether it runs
+    /// the Run and Test lenses' commands.
+    pub mutating fun configure(root: str, utf8: bool, run_lenses: bool): void {
         self.root = String.from(root)
         self.utf8 = utf8
+        self.run_lenses = run_lenses
     }
 
     /// A document's new text: staged with the compiler, and its crate

@@ -1,0 +1,100 @@
+// Run and Test lenses: above a top-level `fun main` and each `@test`
+// function, as commands the client runs in a terminal or task. Found by
+// reading the lines, so they stay while the file does not compile.
+
+import alloc.list.*
+import json.writer.*
+import komp_lsp.protocol.*
+
+/// A function a lens sits above: its name, whether it is a test, and where
+/// its declaration, annotations included, starts.
+@derive(Clone)
+struct LensTarget {
+    val name: String
+    val test: bool
+    val offset: uint64
+}
+
+/// `textDocument/codeLens`'s result for the source file at `path`: none
+/// unless the client said it runs the lenses' commands.
+pub fun SourceService.run_lenses(path: str, documents: &Documents): String {
+    var writer = JsonWriter.new()
+    writer.begin_array()
+    if self.run_lenses {
+        val text = documents.text_of(path)
+        val view = TextView.of(text.as_str(), self.utf8)
+        val dir = self.crate_dir(path)
+        while target in &lens_targets(text.as_str()) {
+            writer.begin_object()
+            writer.key("range")
+            writer.write_range(&view, target.offset, target.offset)
+            writer.key("command")
+            writer.begin_object()
+            writer.field_string("title", if target.test { "Test" } else { "Run" })
+            writer.field_string("command", if target.test { "kflat.test" } else { "kflat.run" })
+            writer.key("arguments")
+            writer.begin_array()
+            writer.write_string(dir.as_str())
+            if target.test { writer.write_string(target.name.as_str()) }
+            writer.end_array()
+            writer.end_object()
+            writer.end_object()
+        }
+    }
+    writer.end_array()
+    return writer.finish()
+}
+
+/// `main` declared at the top level, and each function annotated `@test`.
+fun lens_targets(text: str): List<LensTarget> {
+    var out = List.new<LensTarget>()
+    var annotations_start: uint64? = null
+    var annotated_test = false
+    var start: uint64 = 0
+    while start < text.byte_len() {
+        var end = start
+        while end < text.byte_len() && text.byte(end) != 10 { end = end + 1 }
+        val line = text.substring(start, end)
+        val trimmed: str = line.as_str().trim()
+        if trimmed.starts_with("@") {
+            if annotations_start.is_none() { annotations_start = Option.Some(start) }
+            if trimmed == "@test" || trimmed.starts_with("@test ") { annotated_test = true }
+        }
+        val name = trimmed.declared_function()
+        if !name.is_empty() {
+            val declared_at = annotations_start ?: start
+            if annotated_test {
+                out.push(LensTarget { name: name, test: true, offset: declared_at })
+            } else if name.as_str() == "main" && !line.as_str().starts_with(" ") {
+                out.push(LensTarget { name: name, test: false, offset: declared_at })
+            }
+        }
+        if !trimmed.starts_with("@") || !name.is_empty() {
+            annotations_start = null
+            annotated_test = false
+        }
+        start = end + 1
+    }
+    return out
+}
+
+/// The name a line declares with `fun`, after any annotations and `pub`;
+/// "" when it declares none.
+fun str.declared_function(): String {
+    var rest = self
+    while rest.starts_with("@") {
+        val space = rest.index_of(" ") ?: return String.from("")
+        rest = rest.substring(space + 1, rest.byte_len()).as_str().trim_start()
+    }
+    if rest.starts_with("pub ") { rest = rest.substring(4, rest.byte_len()).as_str().trim_start() }
+    if !rest.starts_with("fun ") { return String.from("") }
+    val after = rest.substring(4, rest.byte_len())
+    var end: uint64 = 0
+    while end < after.byte_len() {
+        val byte = after.byte(end)
+        val word = byte == 95 || (byte >= 48 && byte <= 57) || (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122)
+        if !word { break }
+        end = end + 1
+    }
+    return after.substring(0, end)
+}

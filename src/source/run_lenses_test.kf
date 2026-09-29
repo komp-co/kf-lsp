@@ -1,0 +1,32 @@
+fun names(text: str): String {
+    var out = String.from("")
+    while target in &lens_targets(text) {
+        out.append("${if target.test { "test" } else { "run" }}:${target.name}@${target.offset} ".as_str())
+    }
+    return out
+}
+
+@test
+fun main_at_the_top_level_is_run(): void {
+    assert_eq(names("fun main(): int32 {\n    return 0\n}\n").as_str(), "run:main@0 ", "one Run lens")
+}
+
+@test
+fun a_test_lens_sits_on_its_annotation(): void {
+    assert_eq(names("x\n@test\nfun adds(): void {}\n").as_str(), "test:adds@2 ", "at the @test line")
+}
+
+@test
+fun a_test_among_other_annotations_is_found(): void {
+    assert_eq(names("@allow(long_line)\n@test\npub fun long(): void {}\n").as_str(), "test:long@0 ", "first annotation")
+}
+
+@test
+fun a_plain_function_has_no_lens(): void {
+    assert_eq(names("fun helper(): void {}\n").as_str(), "", "nothing")
+}
+
+@test
+fun a_nested_main_is_not_run(): void {
+    assert_eq(names("impl App {\n    fun main(): void {}\n}\n").as_str(), "", "indented")
+}
