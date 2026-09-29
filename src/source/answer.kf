@@ -1,0 +1,38 @@
+// An answer line from `kflatc serve`, and where the files it names are read
+// from.
+
+import json.reader.*
+import komp_lsp.protocol.*
+
+/// One answer, as the JSON text `kflatc serve` wrote.
+pub struct Answer {
+    pub val text: String
+}
+
+impl Answer {
+    pub static fun of(text: str): Answer {
+        return Answer { text: String.from(text) }
+    }
+
+    /// A reader at the value the dotted `path` leads to.
+    pub fun at(path: str): JsonReader? {
+        return self.text.as_str().value_at(path)
+    }
+
+    pub fun string(path: str): String? {
+        return self.text.as_str().string_at(path)
+    }
+
+    pub fun int(path: str): int64? {
+        return self.text.as_str().int_at(path)
+    }
+
+    pub fun flag(path: str): bool? {
+        return self.text.as_str().bool_at(path)
+    }
+}
+
+/// Where a file's text comes from, counted as the client counts characters.
+pub trait FileText {
+    fun view_of(path: str): TextView
+}

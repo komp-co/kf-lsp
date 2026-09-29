@@ -1,0 +1,36 @@
+// The compiler's hover answer as LSP's: markdown, and the range it is about.
+
+import json.writer.*
+import komp_lsp.protocol.*
+
+/// `textDocument/hover`'s result: `null` when the answer names nothing. The
+/// declaration's signature is preferred over the expression's type: it
+/// already holds the return type, and says more. Documentation follows a
+/// rule.
+pub fun Answer.hover(view: &TextView): String {
+    val signature = self.string("result.signature") ?: ""
+    val shown = if signature.is_empty() { self.string("result.type") ?: "" } else { signature }
+    val documentation = self.string("result.documentation") ?: ""
+    var markdown = String.from("")
+    if !shown.is_empty() { markdown.append("```kflat\n${shown}\n```") }
+    if !documentation.is_empty() {
+        if !markdown.is_empty() { markdown.append("\n---\n") }
+        markdown.append(documentation.as_str())
+    }
+    if markdown.is_empty() { return String.from("null") }
+    var writer = JsonWriter.object()
+    writer.key("contents")
+    writer.begin_object()
+    writer.field_string("kind", "markdown")
+    writer.field_string("value", markdown.as_str())
+    writer.end_object()
+    // A declaration's own name covers no expression: there is no span, and
+    // an empty range at 0 would highlight the top of the file.
+    val start = self.int("result.byte_start") ?: 0
+    val end = self.int("result.byte_end") ?: 0
+    if end > start {
+        writer.key("range")
+        writer.write_range(view, start as uint64, end as uint64)
+    }
+    return writer.finish()
+}

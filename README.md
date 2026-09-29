@@ -46,7 +46,9 @@ cache has it, and is asked once per session.
   each lint's group, level, description and options, and levels complete in
   values (`komp lint --list`).
 
-Saving a kf.toml, kf.lock or lint.toml asks about its project again. This
+Saving a kf.toml, kf.lock or lint.toml asks about its project again, and so
+does a question komp could not answer, such as one to a tool that is not
+installed: it is not asked again until then. This
 needs a komp with `komp outdated` and `komp search --offline`; an older one
 leaves the manifests unanswered.
 
@@ -61,6 +63,19 @@ it over stdio. komp runs the version the project's `[tools]` table pins, else
 the installed one, and hands its process to it, so stopping the server leaves
 nothing behind. The server asks the komp that started it about the project
 (`KOMP_BIN` overrides that, `komp` on `PATH` otherwise).
+
+## How the source is laid out
+
+| Module | Holds |
+|---|---|
+| `protocol/` | the wire: framing, messages, replies, JSON paths, positions, URIs, open documents |
+| `compiler/` | `kflatc serve` as a child process, and the project `komp metadata` describes |
+| `source/` | `.kf` files: the compiler's answers as LSP results, and `SourceService`, which stages and checks |
+| `komp/` | `Komp`, which asks komp about packages, lints and toolchains, and reads its JSON |
+| `manifest/` | kf.toml and lint.toml: the scanner, and `ManifestService`, which answers from `Komp` |
+
+`Server`, at the top, keeps the lifecycle and the open documents, and hands
+each request to the service for its file.
 
 ## Building it
 

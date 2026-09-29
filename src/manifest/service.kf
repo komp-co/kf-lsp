@@ -1,0 +1,55 @@
+// The files komp reads beside the source, kf.toml and lint.toml, answered
+// from what komp reports rather than by the compiler.
+
+import komp_lsp.komp.*
+import komp_lsp.protocol.*
+
+pub struct ManifestService {
+    var komp: Komp
+    var utf8: bool
+}
+
+impl ManifestService {
+    pub static fun new(komp: str): ManifestService {
+        return ManifestService { komp: Komp.new(komp), utf8: false }
+    }
+
+    /// How the client counts characters.
+    pub mutating fun configure(utf8: bool): void {
+        self.utf8 = utf8
+    }
+
+    /// The result of `method` about the manifest at `path`, whose text is
+    /// `text`; `empty` for a method it does not answer.
+    pub mutating fun request(method: str, body: str, path: str, text: str, empty: str): String {
+        val view = TextView.of(text, self.utf8)
+        val manifest = Manifest.parse(text)
+        val offset = view.request_offset(body)
+        if method == "textDocument/completion" { return self.completion(path, &manifest, &view, offset) }
+        if method == "textDocument/hover" { return self.hover(path, &manifest, &view, offset) }
+        if method != "textDocument/inlayHint" { return String.from(empty) }
+        val first = body.int_at("params.range.start.line") ?: 0
+        val last = body.int_at("params.range.end.line") ?: 9223372036854775807
+        return self.inlay_hints(path, &manifest, &view, first as uint64, last as uint64)
+    }
+
+    /// A saved kf.toml, kf.lock or lint.toml changes what komp reports about
+    /// its project.
+    pub mutating fun saved(path: str): void {
+        val known = path.ends_with("/kf.toml") || path.ends_with("/kf.lock") || path.ends_with("/lint.toml")
+        if known { self.komp.forget(path.parent_dir().as_str()) }
+    }
+}
+
+/// Whether the path is a kf.toml or a lint.toml.
+pub fun str.is_manifest(): bool {
+    return self.ends_with("/kf.toml") || self.ends_with("/lint.toml")
+}
+
+/// The directory holding the path.
+fun str.parent_dir(): String {
+    var at = self.byte_len()
+    while at > 0 && self.byte(at - 1) != 47 { at = at - 1 }
+    if at == 0 { return String.from(".") }
+    return self.substring(0, at - 1)
+}

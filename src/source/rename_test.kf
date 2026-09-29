@@ -1,0 +1,44 @@
+import core.assert.assert_eq
+import komp_lsp.protocol.*
+
+fun renamed(): String {
+    return String.from("{\"id\":1,\"result\":{\"ok\":true,\"error\":null,") +
+        "\"range\":{\"file\":\"/w/a.kf\",\"byte_start\":4,\"byte_end\":7}," +
+        "\"edits\":[{\"file\":\"/w/a.kf\",\"byte_start\":4,\"byte_end\":7}," +
+        "{\"file\":\"/w/a.kf\",\"byte_start\":9,\"byte_end\":12}]}}"
+}
+
+fun refused(): String {
+    return String.from("{\"id\":1,\"result\":{\"ok\":false,\"error\":\"`b` is already declared\",") +
+        "\"range\":null,\"edits\":[]}}"
+}
+
+@test
+fun prepare_rename_is_the_name_under_the_cursor(): void {
+    val expected = "{\"start\":{\"line\":0,\"character\":4},\"end\":{\"line\":0,\"character\":7}}"
+    val range = Answer.of(renamed().as_str()).prepare_rename(&TextView.of("fun add add", true))
+    assert_eq(range.as_str(), expected, "the name's range")
+}
+
+@test
+fun a_refused_prepare_is_null(): void {
+    val range = Answer.of(refused().as_str()).prepare_rename(&TextView.of("", true))
+    assert_eq(range.as_str(), "null", "nothing to rename")
+}
+
+@test
+fun a_refusal_carries_the_reason(): void {
+    assert_eq(Answer.of(refused().as_str()).rename_refusal() ?: "", "`b` is already declared", "the compiler's reason")
+}
+
+@test
+fun an_accepted_rename_is_no_refusal(): void {
+    assert_eq(Answer.of(renamed().as_str()).rename_refusal().is_none(), true, "ok")
+}
+
+@test
+fun edits_are_grouped_by_file(): void {
+    val texts = FixedText { text: String.from("fun add add"), utf8: true }
+    val edit = Answer.of(renamed().as_str()).rename("plus", &texts)
+    assert_eq(edit.as_str().starts_with("{\"changes\":{\"file:///w/a.kf\":[{\"range\""), true, "one file, its edits")
+}

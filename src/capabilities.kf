@@ -1,0 +1,44 @@
+// What the server tells the client it can do, in `initialize`'s result.
+
+import json.writer.*
+import komp_lsp.source.semantic_token_legend
+
+/// `initialize`'s result; `utf8` when the client counts characters in bytes.
+fun capabilities(utf8: bool): String {
+    var writer = JsonWriter.object()
+    writer.key("capabilities")
+    writer.begin_object()
+    writer.field_string("positionEncoding", if utf8 { "utf-8" } else { "utf-16" })
+    writer.key("textDocumentSync")
+    writer.begin_object()
+    writer.field_bool("openClose", true)
+    writer.field_int64("change", 1)
+    writer.field_raw("save", "{\"includeText\":false}")
+    writer.end_object()
+    writer.field_bool("documentSymbolProvider", true)
+    writer.field_bool("foldingRangeProvider", true)
+    writer.field_bool("selectionRangeProvider", true)
+    writer.field_bool("hoverProvider", true)
+    writer.field_bool("definitionProvider", true)
+    writer.field_bool("referencesProvider", true)
+    writer.field_raw("signatureHelpProvider", "{\"triggerCharacters\":[\"(\",\",\"]}")
+    writer.field_raw("completionProvider", "{\"triggerCharacters\":[\".\"]}")
+    writer.field_bool("inlayHintProvider", true)
+    writer.key("semanticTokensProvider")
+    writer.begin_object()
+    writer.key("legend")
+    writer.begin_object()
+    writer.field_raw("tokenTypes", semantic_token_legend().as_str())
+    writer.field_raw("tokenModifiers", "[]")
+    writer.end_object()
+    writer.field_bool("full", true)
+    writer.end_object()
+    writer.field_raw("renameProvider", "{\"prepareProvider\":true}")
+    writer.field_raw("codeActionProvider", "{\"codeActionKinds\":[\"quickfix\"]}")
+    writer.end_object()
+    writer.key("serverInfo")
+    writer.begin_object()
+    writer.field_string("name", "komp-lsp")
+    writer.end_object()
+    return writer.finish()
+}

@@ -1,0 +1,178 @@
+// What komp reports about packages, read from its JSON: an index's catalog,
+// one package's versions, a project's outdated rows, the cache's sources
+// and the installed toolchains.
+
+import alloc.list.*
+import json.reader.*
+import komp_lsp.protocol.string_at
+import komp_lsp.protocol.value_at
+
+@derive(Clone)
+pub struct CatalogPackage {
+    pub val name: String
+    pub val newest: String
+    pub val description: String
+}
+
+impl CatalogPackage {
+    /// `komp search --format=json`'s packages.
+    pub static fun parse_list(text: str): List<CatalogPackage> {
+        var out = List.new<CatalogPackage>()
+        var reader = text.value_at("packages") ?: return out
+        if !reader.begin_array() { return out }
+        while reader.array_has_next() {
+            var name = String.from("")
+            var newest = String.from("")
+            var description = String.from("")
+            if !reader.begin_object() { return out }
+            while reader.object_has_next() {
+                val key = reader.read_key()
+                when key.as_str() {
+                    "name" => name = reader.read_text()
+                    "newest" => newest = reader.read_text()
+                    "description" => description = reader.read_text()
+                    _ => reader.skip_value()
+                }
+            }
+            out.push(CatalogPackage { name: name, newest: newest, description: description })
+        }
+        return out
+    }
+}
+
+@derive(Clone)
+pub struct PackageVersion {
+    pub val version: String
+    pub val yanked: bool
+}
+
+impl PackageVersion {
+    /// `komp info --format=json`'s versions, in the index's order.
+    pub static fun parse_list(text: str): List<PackageVersion> {
+        var out = List.new<PackageVersion>()
+        var reader = text.value_at("versions") ?: return out
+        if !reader.begin_array() { return out }
+        while reader.array_has_next() {
+            var version = String.from("")
+            var yanked = false
+            if !reader.begin_object() { return out }
+            while reader.object_has_next() {
+                val key = reader.read_key()
+                when key.as_str() {
+                    "version" => version = reader.read_text()
+                    "yanked" => yanked = reader.peek_kind() == JsonKind.Bool && reader.read_bool()
+                    _ => reader.skip_value()
+                }
+            }
+            out.push(PackageVersion { version: version, yanked: yanked })
+        }
+        return out
+    }
+}
+
+/// One row of `komp outdated`; "" for what it reports as `null`.
+@derive(Clone)
+pub struct OutdatedRow {
+    /// `dependencies` or `tools`.
+    pub var section: String
+    pub var name: String
+    pub var requirement: String
+    pub var index: String
+    pub var locked: String
+    pub var allowed: String
+    pub var newest: String
+    pub var error: String
+}
+
+impl OutdatedRow {
+    /// `komp outdated --format=json`'s rows, dependencies before tools.
+    pub static fun parse_list(text: str): List<OutdatedRow> {
+        var out = List.new<OutdatedRow>()
+        out.read_rows(text, "dependencies")
+        out.read_rows(text, "tools")
+        return out
+    }
+
+    static fun empty(section: str): OutdatedRow {
+        return OutdatedRow {
+            section: String.from(section), name: String.from(""), requirement: String.from(""),
+            index: String.from(""), locked: String.from(""), allowed: String.from(""), newest: String.from(""),
+            error: String.from("")
+        }
+    }
+}
+
+mutating fun List<OutdatedRow>.read_rows(text: str, section: str): void {
+    var reader = text.value_at(section) ?: return
+    if !reader.begin_array() { return }
+    while reader.array_has_next() {
+        var row = OutdatedRow.empty(section)
+        if !reader.begin_object() { return }
+        while reader.object_has_next() {
+            val key = reader.read_key()
+            when key.as_str() {
+                "name" => row.name = reader.read_text()
+                "requirement" => row.requirement = reader.read_text()
+                "index" => row.index = reader.read_text()
+                "locked" => row.locked = reader.read_text()
+                "allowed" => row.allowed = reader.read_text()
+                "newest" => row.newest = reader.read_text()
+                "error" => row.error = reader.read_text()
+                _ => reader.skip_value()
+            }
+        }
+        self.push(row)
+    }
+}
+
+/// `name@version` for every source `komp cache list --format=json` lists.
+fun parse_cached(text: str): List<String> {
+    var out = List.new<String>()
+    var reader = text.value_at("sources") ?: return out
+    if !reader.begin_array() { return out }
+    while reader.array_has_next() {
+        var name = String.from("")
+        var version = String.from("")
+        if !reader.begin_object() { return out }
+        while reader.object_has_next() {
+            val key = reader.read_key()
+            when key.as_str() {
+                "name" => name = reader.read_text()
+                "version" => version = reader.read_text()
+                _ => reader.skip_value()
+            }
+        }
+        out.push("${name}@${version}")
+    }
+    return out
+}
+
+/// The running komp's version, then each installed toolchain's, from
+/// `komp self list --format=json`.
+fun parse_toolchains(text: str): List<String> {
+    var out = List.new<String>()
+    val running = text.string_at("running") ?: ""
+    if !running.is_empty() { out.push(running.clone()) }
+    var reader = text.value_at("toolchains") ?: return out
+    if !reader.begin_array() { return out }
+    while reader.array_has_next() {
+        if !reader.begin_object() { return out }
+        while reader.object_has_next() {
+            val key = reader.read_key()
+            if key.as_str() != "version" {
+                reader.skip_value()
+                continue
+            }
+            val version = reader.read_text()
+            if !out.contains(&version) { out.push(version) }
+        }
+    }
+    return out
+}
+
+/// A string value, or "" for `null` or anything else.
+mutating fun JsonReader.read_text(): String {
+    if self.peek_kind() == JsonKind.String { return self.read_string() }
+    self.skip_value()
+    return String.from("")
+}

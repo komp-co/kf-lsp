@@ -1,0 +1,67 @@
+// Hover in kf.toml and lint.toml: a package's versions and index, a lint's
+// description and options, a group's lints.
+
+import alloc.list.*
+import json.writer.*
+import komp_lsp.komp.*
+import komp_lsp.protocol.*
+
+/// `textDocument/hover`'s result at byte `offset` of a manifest; `null` off
+/// a row komp knows about.
+mutating fun ManifestService.hover(path: str, manifest: &Manifest, view: &TextView, offset: uint64): String {
+    val row = manifest.row_at(offset) ?: return String.from("null")
+    val dir = path.parent_dir()
+    var markdown = String.from("")
+    if path.ends_with("/lint.toml") || row.table.as_str() == "lint" {
+        markdown = self.lint_hover(dir.as_str(), &row)
+    } else if row.table.as_str() == "dependencies" || row.table.as_str() == "tools" {
+        markdown = self.package_hover(dir.as_str(), &row)
+    }
+    if markdown.is_empty() { return String.from("null") }
+    var writer = JsonWriter.object()
+    writer.field_raw("contents", markdown_json(markdown.as_str()).as_str())
+    writer.key("range")
+    writer.write_range(view, row.key_start, row.key_end)
+    return writer.finish()
+}
+
+mutating fun ManifestService.package_hover(dir: str, row: &ManifestRow): String {
+    val rows = self.komp.outdated(dir)
+    val _catalog = self.komp.catalog()
+    var out = "**${row.key}**"
+    val package = self.komp.catalog_entry(row.key.as_str())
+    when (package) {
+        Some(entry) => if !entry.description.is_empty() { out.append("\n\n${entry.description}".as_str()) }
+        None => {}
+    }
+    var known = package.is_some()
+    while fact in &rows {
+        if fact.section.as_str() != row.table.as_str() || fact.name.as_str() != row.key.as_str() { continue }
+        known = true
+        out.append("\n\n".as_str())
+        if !fact.error.is_empty() {
+            out.append(fact.error.as_str())
+            continue
+        }
+        out.append("- requirement `${fact.requirement}`\n".as_str())
+        if !fact.locked.is_empty() { out.append("- locked ${fact.locked}\n".as_str()) }
+        if !fact.allowed.is_empty() { out.append("- newest allowed ${fact.allowed}\n".as_str()) }
+        if !fact.newest.is_empty() { out.append("- newest ${fact.newest}\n".as_str()) }
+        out.append("- from ${fact.index}".as_str())
+    }
+    return if known { out } else { String.from("") }
+}
+
+mutating fun ManifestService.lint_hover(dir: str, row: &ManifestRow): String {
+    val facts = self.komp.lints(dir)
+    if row.table.as_str() == "groups" {
+        var names = List.new<String>()
+        while lint in &facts.lints {
+            if lint.group.as_str() == row.key.as_str() || row.key.as_str() == "all" { names.push(lint.name.clone()) }
+        }
+        if names.is_empty() { return String.from("") }
+        return "**${row.key}**: ${names.join(", ")}"
+    }
+    val lint = facts.lint_named(row.key.as_str()) ?: return String.from("")
+    return "**${lint.name}** (${lint.group})\n\n${lint.markdown()}"
+}

@@ -1,0 +1,51 @@
+// The compiler's `signature` answer as LSP signature help.
+
+import json.reader.*
+import json.writer.*
+
+/// `textDocument/signatureHelp`'s result: the one signature of the call
+/// around the cursor, or `null` when the cursor is in no call the compiler
+/// can name.
+pub fun Answer.signature_help(): String {
+    val label = self.string("result.label") ?: return String.from("null")
+    val active = self.int("result.active_parameter") ?: 0
+    var writer = JsonWriter.object()
+    writer.key("signatures")
+    writer.begin_array()
+    writer.begin_object()
+    writer.field_string("label", label.as_str())
+    writer.key("parameters")
+    writer.begin_array()
+    writer.write_parameters(self)
+    writer.end_array()
+    writer.end_object()
+    writer.end_array()
+    writer.field_int64("activeSignature", 0)
+    writer.field_int64("activeParameter", active)
+    return writer.finish()
+}
+
+mutating fun JsonWriter.write_parameters(answer: &Answer): void {
+    var reader = answer.at("result.parameters") ?: return
+    if !reader.begin_array() { return }
+    while reader.array_has_next() {
+        val parameter = read_label(&var reader)
+        self.begin_object()
+        self.field_string("label", parameter.as_str())
+        self.end_object()
+    }
+}
+
+/// The `label` of the object the reader stands at.
+fun read_label(reader: &var JsonReader): String {
+    var label = String.from("")
+    if !reader.begin_object() {
+        reader.skip_value()
+        return label
+    }
+    while reader.object_has_next() {
+        val key = reader.read_key()
+        if key.as_str() == "label" { label = reader.read_string() } else { reader.skip_value() }
+    }
+    return label
+}

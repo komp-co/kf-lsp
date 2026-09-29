@@ -1,0 +1,46 @@
+// A JSON-RPC message, read as far as dispatch needs it.
+
+import json.quote.*
+import json.reader.*
+
+/// `id` is the id's JSON text, echoed back verbatim; a notification has
+/// none. A message without a method is a response to the server.
+@derive(Clone)
+pub struct Message {
+    pub val id: String?
+    pub val method: String?
+}
+
+impl Message {
+    /// `null` when `body` is not one JSON object.
+    pub static fun parse(body: str): Message? {
+        var reader = JsonReader.new(body)
+        if !reader.begin_object() { return null }
+        var id: String? = null
+        var method: String? = null
+        while reader.object_has_next() {
+            val key = reader.read_key()
+            if key.as_str() == "id" {
+                id = read_id(&var reader)
+            } else if key.as_str() == "method" {
+                method = Option.Some(reader.read_string())
+            } else {
+                reader.skip_value()
+            }
+        }
+        if reader.has_error() || !reader.at_end() { return null }
+        return Option.Some(Message { id: id, method: method })
+    }
+}
+
+/// A string or integer id as JSON text; `null` for anything else.
+fun read_id(reader: &var JsonReader): String? {
+    return when (reader.peek_kind()) {
+        String => Option.Some(reader.read_string().as_str().json_quoted())
+        Number => Option.Some("${reader.read_int64()}")
+        _ => {
+            reader.skip_value()
+            null
+        }
+    }
+}

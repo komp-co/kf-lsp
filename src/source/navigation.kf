@@ -1,0 +1,87 @@
+// The compiler's `references` answer as LSP locations: where a name is
+// declared, and where it is used.
+
+import alloc.list.*
+import json.reader.*
+import json.writer.*
+import komp_lsp.protocol.file_uri
+import komp_lsp.protocol.write_range
+
+/// A span of bytes in a file, as the compiler reports one.
+@derive(Clone)
+struct FileSpan {
+    val file: String
+    val start: uint64
+    val end: uint64
+}
+
+/// `textDocument/definition`'s result: the declaration's location, or
+/// `null` when the answer names none.
+pub fun Answer.definition(files: &dyn FileText): String {
+    val declaration = self.span_at("result.declaration") ?: return String.from("null")
+    var writer = JsonWriter.new()
+    writer.write_location(&declaration, files)
+    return writer.finish()
+}
+
+/// `textDocument/references`' result: every use, preceded by the
+/// declaration when the client asks for it too.
+pub fun Answer.references(with_declaration: bool, files: &dyn FileText): String {
+    var writer = JsonWriter.new()
+    writer.begin_array()
+    if with_declaration {
+        val declaration = self.span_at("result.declaration")
+        if declaration.is_some() { writer.write_location(&declaration.unwrap(), files) }
+    }
+    writer.write_uses(self, files)
+    writer.end_array()
+    return writer.finish()
+}
+
+/// The span `path` leads to in `answer`.
+fun Answer.span_at(path: str): FileSpan? {
+    var reader = self.at(path) ?: return null
+    return read_file_span(&var reader)
+}
+
+mutating fun JsonWriter.write_uses(answer: &Answer, files: &dyn FileText): void {
+    var reader = answer.at("result.references") ?: return
+    if !reader.begin_array() { return }
+    while reader.array_has_next() {
+        val use = read_file_span(&var reader) ?: continue
+        self.write_location(&use, files)
+    }
+}
+
+/// The `{"file", "byte_start", "byte_end"}` object the reader stands at;
+/// `null`, with the value passed over, for anything else.
+fun read_file_span(reader: &var JsonReader): FileSpan? {
+    if reader.take_null() { return null }
+    if !reader.begin_object() {
+        reader.skip_value()
+        return null
+    }
+    var file = String.from("")
+    var start: uint64 = 0
+    var end: uint64 = 0
+    while reader.object_has_next() {
+        val key = reader.read_key()
+        when key.as_str() {
+            "file" => file = reader.read_string()
+            "byte_start" => start = reader.read_uint64()
+            "byte_end" => end = reader.read_uint64()
+            _ => reader.skip_value()
+        }
+    }
+    if file.is_empty() { return null }
+    return Option.Some(FileSpan { file: file, start: start, end: end })
+}
+
+mutating fun JsonWriter.write_location(span: &FileSpan, files: &dyn FileText): void {
+    val view = files.view_of(span.file.as_str())
+    self.begin_object()
+    self.field_string("uri", span.file.as_str().file_uri().as_str())
+    self.key("range")
+    self.write_range(&view, span.start, span.end)
+    self.end_object()
+}

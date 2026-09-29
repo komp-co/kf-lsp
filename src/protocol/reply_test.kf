@@ -1,0 +1,11 @@
+@test
+fun a_result_reply_carries_the_id_and_result(): void {
+    assert_eq("7".result_reply("null").as_str(), "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":null}", "result")
+}
+
+@test
+fun an_error_reply_carries_the_code_and_message(): void {
+    val reply = "\"x\"".error_reply(ErrorCode.MethodNotFound, "no")
+    val expected = "{\"jsonrpc\":\"2.0\",\"id\":\"x\",\"error\":{\"code\":-32601,\"message\":\"no\"}}"
+    assert_eq(reply.as_str(), expected, "error")
+}

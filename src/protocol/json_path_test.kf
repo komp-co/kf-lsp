@@ -1,0 +1,28 @@
+import core.assert.assert_eq
+
+@test
+fun a_nested_string_is_found(): void {
+    val text = "{\"id\":1,\"params\":{\"textDocument\":{\"version\":2,\"uri\":\"file:///a.kf\"}}}"
+    assert_eq(text.as_str().string_at("params.textDocument.uri") ?: "", "file:///a.kf", "through two objects")
+}
+
+@test
+fun a_missing_key_is_null(): void {
+    assert_eq("{\"params\":{}}".string_at("params.textDocument.uri").is_none(), true, "no textDocument")
+}
+
+@test
+fun a_value_of_another_type_is_null(): void {
+    assert_eq("{\"id\":1}".string_at("id").is_none(), true, "an integer is not a string")
+}
+
+@test
+fun an_integer_is_read(): void {
+    assert_eq("{\"a\":{\"b\":42}}".int_at("a.b") ?: 0, 42, "nested integer")
+}
+
+@test
+fun an_array_of_strings_is_read(): void {
+    val found = "{\"general\":{\"positionEncodings\":[\"utf-16\",\"utf-8\"]}}".strings_at("general.positionEncodings")
+    assert_eq(found.size() == 2 && found[1].as_str() == "utf-8", true, "both encodings")
+}
