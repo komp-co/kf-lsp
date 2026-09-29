@@ -39,6 +39,12 @@ def main():
     program_uri = "file://" + os.path.join(root, "app", "src", "main.kf")
 
     child = subprocess.Popen([server], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    waiting = ["the server to start"]
+
+    def timed_out(_signal, _frame):
+        sys.exit("FAIL  timed out waiting for " + waiting[0])
+
+    signal.signal(signal.SIGALRM, timed_out)
     signal.alarm(180)
 
     def send(message):
@@ -66,7 +72,7 @@ def main():
                 return message["params"]["diagnostics"]
 
     def expect(what, holds):
-        print(("PASS  " if holds else "FAIL  ") + what)
+        print(("PASS  " if holds else "FAIL  ") + what, flush=True)
         if not holds:
             sys.exit(1)
 
@@ -84,11 +90,13 @@ def main():
         send({"method": "textDocument/didOpen",
               "params": {"textDocument": {"uri": uri, "languageId": "kflat", "version": 1, "text": text}}})
 
+    waiting[0] = "the saved rename to reach app"
     save_library(LIBRARY.replace("area", "surface"), 2)
     broken = diagnostics_of(program_uri)
     expect("renaming a library function and saving breaks its caller in another crate",
            len(broken) > 0 and broken[0]["severity"] == 1)
 
+    waiting[0] = "the saved rename back to reach app"
     save_library(LIBRARY, 3)
     expect("renaming it back and saving clears the caller", diagnostics_of(program_uri) == [])
 
@@ -96,9 +104,11 @@ def main():
         send({"method": "textDocument/didChange",
               "params": {"textDocument": {"uri": library_uri, "version": version}, "contentChanges": [{"text": text}]}})
 
+    waiting[0] = "the unsaved edit to reach app, which needs a kflatc with check's `sources`"
     edit_library(LIBRARY.replace("pub fun", "fun"), 4)
     unsaved = diagnostics_of(program_uri)
     expect("an unsaved edit that hides the function reaches its caller", len(unsaved) > 0)
+    waiting[0] = "undoing the unsaved edit to reach app"
     edit_library(LIBRARY, 5)
     expect("undoing the unsaved edit clears the caller", diagnostics_of(program_uri) == [])
 
