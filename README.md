@@ -28,6 +28,28 @@ published, and cleared when a later check no longer reports them. It negotiates
 `positionEncoding: utf-8` when the client offers it, and counts UTF-16 code
 units otherwise.
 
+## kf.toml and lint.toml
+
+The manifests are answered from what komp reports, never by the compiler, and
+never waiting on the network: every question reads the package index as the
+cache has it, and is asked once per session.
+
+- In `[dependencies]` and `[tools]`, completion offers the index's packages,
+  and inside a requirement their versions, newest first, yanked ones left out
+  and the cached ones marked (`komp search`, `komp info`, `komp cache list`).
+  A dependency naming `index = "..."` is looked up in that index.
+- Hover on a dependency or tool gives its description, the version `kf.lock`
+  holds, the newest its requirement allows and the newest in the index; an
+  inlay hint after it says the same in a line (`komp outdated`).
+- `kflat` in `[project]` completes the installed toolchains (`komp self list`).
+- In `lint.toml`, and the `[lint]` table of kf.toml, completion and hover give
+  each lint's group, level, description and options, and levels complete in
+  values (`komp lint --list`).
+
+Saving a kf.toml, kf.lock or lint.toml asks about its project again. This
+needs a komp with `komp outdated` and `komp search --offline`; an older one
+leaves the manifests unanswered.
+
 ## Installing it
 
 ```sh
@@ -54,6 +76,7 @@ komp build .        # target/kflat/komp_lsp
 ```sh
 komp test .
 python3 tests/session.py target/kflat/komp_lsp
+python3 tests/manifests.py target/kflat/komp_lsp
 ```
 
 `tests/session.py` drives one editor session end to end: an error published
@@ -61,7 +84,9 @@ where it is, then cleared by a fix typed in three quick edits that are
 checked once, then the outline, folds and selection of the unsaved text, a
 hover before and after an edit, the definition, references and signature of
 a call, the hints, tokens, completions and renames of a later edit, and the
-quick fix for a misspelt method.
+quick fix for a misspelt method. `tests/manifests.py` builds a scratch package
+index and asks about a project's kf.toml and lint.toml: package, version and
+lint completion, hover, and the version hints.
 
 ## Neovim
 

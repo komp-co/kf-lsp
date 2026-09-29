@@ -1,0 +1,44 @@
+import core.assert.assert_eq
+
+@test
+fun a_catalog_package_carries_its_newest_version(): void {
+    val found = parse_search("""{"index":"i","packages":[{"name":"json","newest":"0.2.0","description":null}]}""")
+    assert_eq("${found[0].name}@${found[0].newest}".as_str(), "json@0.2.0", "name and newest")
+}
+
+@test
+fun a_yanked_version_is_marked(): void {
+    val found = parse_info("""{"versions":[{"version":"0.1.0","yanked":false},{"version":"0.1.1","yanked":true}]}""")
+    assert_eq(found[1].yanked, true, "0.1.1 is yanked")
+}
+
+@test
+fun an_outdated_null_reads_as_empty(): void {
+    val text = """{"project":"/p","dependencies":[{"name":"json","requirement":"0.1","index":"i","locked":null,
+"allowed":"0.1.0","newest":"0.2.0","error":null}],"tools":[{"name":"komp_fmt","requirement":"0.1","index":"i",
+"locked":null,"allowed":"0.1.0","newest":"0.1.0","error":null}]}"""
+    val rows = parse_outdated(text)
+    assert_eq("${rows[0].locked}|${rows[0].newest}|${rows[1].section}".as_str(), "|0.2.0|tools", "both sections")
+}
+
+@test
+fun a_cached_source_is_named_with_its_version(): void {
+    val found = parse_cached("""{"cache":"/c","sources":[{"name":"json","version":"0.2.0","kind":"git"}]}""")
+    assert_eq(found[0].as_str(), "json@0.2.0", "name@version")
+}
+
+@test
+fun the_running_toolchain_comes_first(): void {
+    val found = parse_toolchains("""{"running":"0.5.4","default":null,"toolchains":[{"version":"0.5.3"}]}""")
+    assert_eq("${found[0]} ${found[1]}".as_str(), "0.5.4 0.5.3", "running, then installed")
+}
+
+@test
+fun a_lint_option_carries_its_numbers(): void {
+    val text = """{"groups":["restriction"],"lints":[{"name":"long_line","group":"restriction","level":"allow",
+"default":"allow","description":"a long line","options":[{"key":"max_columns","value":100,"default":120,
+"description":"the most"}]}]}"""
+    val option = parse_lint_list(text).lints[0].options[0]
+    val shown = "${option.key}=${option.value}/${option.default_value}"
+    assert_eq(shown.as_str(), "max_columns=100/120", "value and default")
+}

@@ -1,0 +1,128 @@
+// What komp has said about packages and lints this session, so each question
+// runs komp once. Every question reads the index as the cache has it: no
+// request waits on the network.
+
+import alloc.list.*
+
+@derive(Clone)
+struct VersionsOf {
+    val key: String
+    val versions: List<PackageVersion>
+}
+
+@derive(Clone)
+struct OutdatedOf {
+    val dir: String
+    val rows: List<OutdatedRow>
+}
+
+@derive(Clone)
+struct LintsOf {
+    val dir: String
+    val facts: LintFacts
+}
+
+pub struct ManifestFacts {
+    var catalog: List<CatalogPackage>
+    var versions: List<VersionsOf>
+    var outdated: List<OutdatedOf>
+    var lints: List<LintsOf>
+}
+
+impl ManifestFacts {
+    pub static fun new(): ManifestFacts {
+        return ManifestFacts {
+            catalog: List.new<CatalogPackage>(), versions: List.new<VersionsOf>(), outdated: List.new<OutdatedOf>(),
+            lints: List.new<LintsOf>()
+        }
+    }
+
+    /// Every package in the default index. A question komp cannot answer
+    /// is asked again next time.
+    pub mutating fun catalog(komp: str): List<CatalogPackage> {
+        if self.catalog.is_empty() {
+            val answer = komp_output(komp, &"search --offline --format=json".split(" ")) ?: return self.catalog.clone()
+            self.catalog = parse_search(answer.as_str())
+        }
+        return self.catalog.clone()
+    }
+
+    pub fun catalog_entry(name: str): CatalogPackage? {
+        while package in &self.catalog {
+            if package.name.as_str() == name { return Option.Some(package.clone()) }
+        }
+        return null
+    }
+
+    /// `name`'s versions in the index at `index`, or the default one for "".
+    pub mutating fun versions(komp: str, name: str, index: str): List<PackageVersion> {
+        val key = "${index} ${name}"
+        while known in &self.versions {
+            if known.key.as_str() == key.as_str() { return known.versions.clone() }
+        }
+        var args = "info --offline --format=json".split(" ")
+        args.push(String.from(name))
+        if !index.is_empty() {
+            args.push(String.from("--index"))
+            args.push(String.from(index))
+        }
+        val answer = komp_output(komp, &args) ?: return List.new<PackageVersion>()
+        val found = parse_info(answer.as_str())
+        self.versions.push(VersionsOf { key: key, versions: found.clone() })
+        return found
+    }
+
+    /// `komp outdated` for the project in `dir`.
+    pub mutating fun outdated(komp: str, dir: str): List<OutdatedRow> {
+        while known in &self.outdated {
+            if known.dir.as_str() == dir { return known.rows.clone() }
+        }
+        var args = "outdated --offline --format=json".split(" ")
+        args.push(String.from(dir))
+        val answer = komp_output(komp, &args) ?: return List.new<OutdatedRow>()
+        val rows = parse_outdated(answer.as_str())
+        self.outdated.push(OutdatedOf { dir: String.from(dir), rows: rows.clone() })
+        return rows
+    }
+
+    /// Every lint and group, with the levels in force in `dir`.
+    pub mutating fun lints(komp: str, dir: str): LintFacts {
+        while known in &self.lints {
+            if known.dir.as_str() == dir { return known.facts.clone() }
+        }
+        var args = "lint --list --format=json".split(" ")
+        args.push(String.from(dir))
+        val empty = LintFacts { groups: List.new<String>(), lints: List.new<LintFact>() }
+        val answer = komp_output(komp, &args) ?: return empty
+        val facts = parse_lint_list(answer.as_str())
+        self.lints.push(LintsOf { dir: String.from(dir), facts: facts.clone() })
+        return facts
+    }
+
+    /// Drops what was learned about the project in `dir`, whose manifest,
+    /// lock or lint.toml changed; the index's answers stay.
+    pub mutating fun forget(dir: str): void {
+        var outdated = List.new<OutdatedOf>()
+        while known in &self.outdated {
+            if known.dir.as_str() != dir { outdated.push(known.clone()) }
+        }
+        self.outdated = outdated
+        var lints = List.new<LintsOf>()
+        while known in &self.lints {
+            if known.dir.as_str() != dir { lints.push(known.clone()) }
+        }
+        self.lints = lints
+    }
+}
+
+/// `name@version` for every source in the cache.
+pub fun cached_sources(komp: str): List<String> {
+    val answer = komp_output(komp, &"cache list --format=json".split(" ")) ?: return List.new<String>()
+    return parse_cached(answer.as_str())
+}
+
+/// The running komp's version and every installed toolchain's.
+pub fun installed_toolchains(komp: str): List<String> {
+    val answer = komp_output(komp, &"self list --format=json".split(" ")) ?: return List.new<String>()
+    return parse_toolchains(answer.as_str())
+}
