@@ -1,7 +1,7 @@
 [project]
 name = "komp_lsp"
 description = "The KFlat language server; editors start it with `komp lsp`"
-version = "0.1.0"
+version = "0.2.0"
 kind = "bin"
 
 [dependencies]
