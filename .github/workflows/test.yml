@@ -1,7 +1,8 @@
 name: Test
 
-# The server is built with the kflat release `kflat-version` names, installed
-# from its release archive and kept between runs.
+# The server is built with the newest kflat release, installed from its release archive
+# and kept between runs. kf.toml's `kflat` pin decides the toolchain: komp
+# installs the one it names when the newest does not fit.
 on:
   pull_request:
   push:
@@ -16,9 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read the kflat version
+      - name: Find the newest kflat release
         id: kflat
-        run: echo "version=$(cat kflat-version)" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release view --repo komp-co/komp --json tagName --jq .tagName)
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/cache@v4
         id: toolchain
