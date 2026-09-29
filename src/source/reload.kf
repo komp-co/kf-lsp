@@ -16,15 +16,22 @@ struct KnownManifest {
 /// Every member crate's kf.toml and the workspace's, as they are on disk.
 fun SourceService.manifests_on_disk(): List<KnownManifest> {
     var out = List.new<KnownManifest>()
-    var paths = List.new<String>()
-    paths.push("${self.root}/kf.toml")
+    out.push(known_manifest("${self.root}/kf.toml"))
     val project = self.project?.clone() ?: return out
     while entry in &project.crates {
         val path = "${entry.root}/kf.toml"
-        if entry.member && !paths.contains(&path) { paths.push(path) }
+        var listed = false
+        while known in &out {
+            if known.path.as_str() == path.as_str() { listed = true }
+        }
+        if entry.member && !listed { out.push(known_manifest(path)) }
     }
-    while path in &paths { out.push(KnownManifest { path: path.clone(), text: disk_text(path.as_str()) }) }
     return out
+}
+
+fun known_manifest(path: String): KnownManifest {
+    val text = disk_text(path.as_str())
+    return KnownManifest { path: path, text: text }
 }
 
 /// `path` was saved or changed on disk. When it is a kf.toml the loaded
