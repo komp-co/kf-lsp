@@ -12,6 +12,8 @@ pub enum JobKind {
     Fetch
     /// `komp update`, re-resolving and rewriting kf.lock.
     Update
+    /// `komp check --workspace`, writing every member's interface.
+    Check
 }
 
 impl JobKind {
@@ -25,6 +27,10 @@ impl JobKind {
             }
             Fetch => words.push(String.from("metadata"))
             Update => words.push(String.from("update"))
+            Check => {
+                words.push(String.from("check"))
+                words.push(String.from("--workspace"))
+            }
         }
         return words
     }
@@ -52,11 +58,17 @@ impl KompJob {
         var command = Command.new(komp)
         while word in &kind.words() { command.arg(word.as_str()) }
         command.arg(dir)
-        val spawned = command.spawn()
-        if spawned.is_err() { return null }
-        var child = spawned.unwrap()
-        child.stdin = Stream.closed()
-        return Option.Some(KompJob { kind: kind, dir: String.from(dir), child: child, output: String.from("") })
+        // CONSTRAINT: the child is taken from `spawn`'s result in place. Bound to
+        // a `val` and unwrapped, the result still owns it when dropped, and the
+        // child's `Drop` kills it.
+        return when (command.spawn()) {
+            Ok(child) => {
+                var job = KompJob { kind: kind, dir: String.from(dir), child: child, output: String.from("") }
+                job.child.stdin = Stream.closed()
+                Option.Some(job)
+            }
+            Err(_error) => null
+        }
     }
 
     /// Takes what komp has printed so far; the finished job once it has

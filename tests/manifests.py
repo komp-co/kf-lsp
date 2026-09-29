@@ -68,6 +68,8 @@ def main():
         child.stdin.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
         child.stdin.flush()
 
+    seen = []
+
     def receive():
         length = None
         while True:
@@ -79,7 +81,9 @@ def main():
                 break
             if line.lower().startswith(b"content-length:"):
                 length = int(line.split(b":")[1])
-        return json.loads(child.stdout.read(length))
+        message = json.loads(child.stdout.read(length))
+        seen.append(message)
+        return message
 
     next_id = [100]
 
@@ -111,8 +115,15 @@ def main():
     def at(uri, line, character):
         return {"textDocument": {"uri": uri}, "position": {"line": line, "character": character}}
 
-    ask("initialize", {"rootUri": "file://" + project, "capabilities": {}})
+    watching = {"workspace": {"didChangeWatchedFiles": {"dynamicRegistration": True},
+                              "inlayHint": {"refreshSupport": True}}}
+    ask("initialize", {"rootUri": "file://" + project, "capabilities": watching})
     send({"method": "initialized", "params": {}})
+    registration = receive()
+    watchers = registration["params"]["registrations"][0]["registerOptions"]["watchers"]
+    expect("the manifests are watched for changes outside the editor",
+           registration.get("method") == "client/registerCapability"
+           and [w["globPattern"] for w in watchers] == ["**/kf.toml", "**/kf.lock", "**/lint.toml"])
 
     open_document(manifest_uri, manifest + "js")
     items = ask("textDocument/completion", at(manifest_uri, 7, 2))["items"]
@@ -151,6 +162,12 @@ def main():
            hover is not None and "deny here" in hover["contents"]["value"]
            and "max_columns" in hover["contents"]["value"])
 
+    while not any(m.get("method") == "workspace/inlayHint/refresh" for m in seen):
+        receive()
+    logs = [m["params"]["message"] for m in seen if m.get("method") == "window/logMessage"]
+    expect("opening the manifest refreshes its indexes in the background",
+           not any("komp outdated" in line for line in logs))
+
     open_document(manifest_uri, manifest, 5)
     diagnostics = next_diagnostics(manifest_uri)
     by_severity = {d["severity"]: d for d in diagnostics}
@@ -173,6 +190,18 @@ def main():
     ask("workspace/executeCommand", lenses[0]["command"])
     failed = next_diagnostics(manifest_uri, lambda found: any("fetching failed" in d["message"] for d in found))
     expect("a failed fetch is an error on the manifest", any(d["severity"] == 1 for d in failed))
+
+    with open(os.path.join(project, "kf.lock"), "w") as out:
+        out.write('schema = 1\n\n[[package]]\nname = "json"\nversion = "0.2.0"\n%sindex = "%s"\n'
+                  % (ROW, os.environ["KFLAT_INDEX"]))
+    send({"method": "workspace/didChangeWatchedFiles",
+          "params": {"changes": [{"uri": "file://" + project + "/kf.lock", "type": 2}]}})
+    next_diagnostics(manifest_uri)
+    hints = ask("textDocument/inlayHint", {"textDocument": {"uri": manifest_uri},
+                                           "range": {"start": {"line": 0, "character": 0},
+                                                     "end": {"line": 9, "character": 0}}})
+    expect("a kf.lock rewritten outside the editor is read again",
+           [h["label"] for h in hints] == ["locked 0.2.0"])
 
     ask("shutdown", None)
     send({"method": "exit"})

@@ -4,6 +4,31 @@ import json.writer.*
 import komp_lsp.manifest.manifest_commands
 import komp_lsp.source.semantic_token_legend
 
+/// `client/registerCapability`'s params: watch every kf.toml, kf.lock and
+/// lint.toml, which komp may rewrite outside the editor.
+fun watched_manifests(): String {
+    var writer = JsonWriter.object()
+    writer.key("registrations")
+    writer.begin_array()
+    writer.begin_object()
+    writer.field_string("id", "komp-manifests")
+    writer.field_string("method", "workspace/didChangeWatchedFiles")
+    writer.key("registerOptions")
+    writer.begin_object()
+    writer.key("watchers")
+    writer.begin_array()
+    while pattern in &["**/kf.toml", "**/kf.lock", "**/lint.toml"] {
+        writer.begin_object()
+        writer.field_string("globPattern", pattern)
+        writer.end_object()
+    }
+    writer.end_array()
+    writer.end_object()
+    writer.end_object()
+    writer.end_array()
+    return writer.finish()
+}
+
 /// `initialize`'s result; `utf8` when the client counts characters in bytes.
 fun capabilities(utf8: bool): String {
     var writer = JsonWriter.object()
@@ -37,6 +62,7 @@ fun capabilities(utf8: bool): String {
     writer.field_raw("renameProvider", "{\"prepareProvider\":true}")
     writer.field_raw("codeActionProvider", "{\"codeActionKinds\":[\"quickfix\"]}")
     writer.field_raw("codeLensProvider", "{}")
+    writer.field_bool("documentFormattingProvider", true)
     writer.key("executeCommandProvider")
     writer.begin_object()
     writer.field_raw("commands", manifest_commands().as_str())

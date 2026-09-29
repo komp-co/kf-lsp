@@ -7,7 +7,7 @@ index as `komp_lsp`. It keeps one `kflatc serve` running and hands it the
 editor's unsaved text, so every answer follows typing instead of saves. It
 answers diagnostics, quick fixes, document symbols, folding ranges, selection
 ranges, hover, go-to-definition, find-references, signature help, completion,
-inlay hints, semantic tokens and rename.
+inlay hints, semantic tokens, rename, formatting and Run and Test lenses.
 
 It talks to the compiler only through `kflatc serve`, whose protocol is
 stable (the KFlat book's "The compiler as a service" chapter), never through
@@ -27,6 +27,15 @@ line without checking again. Diagnostics for every file of that crate are
 published, and cleared when a later check no longer reports them. It negotiates
 `positionEncoding: utf-8` when the client offers it, and counts UTF-16 code
 units otherwise.
+
+Formatting writes the open text to a scratch file, runs `komp fmt` on it from
+the crate's directory, so the formatter the project pins is the one used, and
+hands back one edit. A client that sets `experimental.kflatRunCommands` in its
+capabilities gets a Run lens above a top-level `fun main` and a Test lens above
+each `@test` function. Their commands are the client's to run in a terminal or
+task: `kflat.run` with the crate's directory (`komp run <dir>`), and
+`kflat.test` with the directory and the test's name
+(`komp test <dir> --case <name>`).
 
 ## kf.toml and lint.toml
 
@@ -58,10 +67,12 @@ published when it finishes.
   each lint's group, level, description and options, and levels complete in
   values (`komp lint --list`).
 
-Saving a kf.toml, kf.lock or lint.toml asks about its project again, and so
-does a question komp could not answer, such as one to a tool that is not
-installed: it is not asked again until then. A komp older than 0.6.0 leaves
-the manifests unanswered.
+Saving a kf.toml, kf.lock or lint.toml asks about its project again, as does
+one changed on disk by `komp update` or a `git pull` when the editor lets the
+server watch files; a kf.toml whose text changed also restarts the compiler on
+the project as it now is. A question komp could not answer, such as one to a
+tool that is not installed, is not asked again until one of these. A komp
+older than 0.6.0 leaves the manifests unanswered.
 
 ## Installing it
 
@@ -103,6 +114,7 @@ komp build .        # target/kflat/komp_lsp
 komp test .
 python3 tests/session.py target/kflat/komp_lsp
 python3 tests/manifests.py target/kflat/komp_lsp
+python3 tests/workspace.py target/kflat/komp_lsp
 ```
 
 `tests/session.py` drives one editor session end to end: an error published
@@ -114,6 +126,9 @@ quick fix for a misspelt method. `tests/manifests.py` builds a scratch package
 index and asks about a project's kf.toml and lint.toml: package, version and
 lint completion, hover, the version hints, the diagnostics and the quick fix
 that raises a requirement, the lenses, and a Fetch that fails.
+`tests/workspace.py` renames a library function in a two-crate workspace and
+saves, and checks that the call in the other crate is reported, then cleared
+once it is renamed back.
 
 ## Neovim
 
@@ -134,7 +149,9 @@ For highlighting, point a TextMate-compatible plugin at the grammar in
 
 ## Limits for now
 
-- Only the crate holding the edited file is checked. A crate that depends on
-  it sees its interface as of the last `komp check` or save.
+- A crate that depends on the edited one is checked again once the edit is
+  saved: `komp check` writes the saved crate's interface in the background,
+  and the workspace crates that load it are checked when it changed. Until
+  the save, they see the interface as it was.
 - Memory grows with each check: the compiler does not yet free a check's
   state. Restarting the server clears it.

@@ -31,6 +31,18 @@ pub struct SourceService {
     var published: List<String>
     /// The fixes those diagnostics carry.
     var fixes: List<Fix>
+    /// The workspace's kf.toml files as the loaded project read them.
+    var known_manifests: List<KnownManifest>
+    /// `komp fmt` failed once, and the user was told.
+    var format_failed: bool
+    /// The client runs the Run and Test lenses' commands.
+    var run_lenses: bool
+    /// `komp check` writing the interfaces after a save, while it runs.
+    var rebuild: List<KompJob>
+    /// The crates saved since the last rebuild started.
+    var saved_crates: List<SavedCrate>
+    /// A save came in during the rebuild, which runs again once it ends.
+    var rebuild_again: bool
 }
 
 /// Open documents' text, else what is on disk: what positions in the files
@@ -51,14 +63,18 @@ impl SourceService {
         return SourceService {
             komp: String.from(komp), root: String.from(""), utf8: false, project: null,
             compiler: List.new<Compiler>(), dirty: List.new<String>(), edited_at: null,
-            published: List.new<String>(), fixes: List.new<Fix>()
+            published: List.new<String>(), fixes: List.new<Fix>(), known_manifests: List.new<KnownManifest>(),
+            format_failed: false, run_lenses: false, rebuild: List.new<KompJob>(),
+            saved_crates: List.new<SavedCrate>(), rebuild_again: false
         }
     }
 
-    /// The workspace, and how the client counts characters.
-    pub mutating fun configure(root: str, utf8: bool): void {
+    /// The workspace, how the client counts characters, and whether it runs
+    /// the Run and Test lenses' commands.
+    pub mutating fun configure(root: str, utf8: bool, run_lenses: bool): void {
         self.root = String.from(root)
         self.utf8 = utf8
+        self.run_lenses = run_lenses
     }
 
     /// A document's new text: staged with the compiler, and its crate
@@ -82,8 +98,19 @@ impl SourceService {
         self.edited_at = Option.Some(Instant.now())
     }
 
-    /// How long until a check is due; `null` when none is waiting.
+    /// How long until a check is due or a rebuild is looked at; `null` when
+    /// neither is waiting.
     pub fun wait_time(): Duration? {
+        val check = self.check_wait()
+        val rebuild = self.rebuild_wait()
+        if check.is_none() { return rebuild }
+        if rebuild.is_none() { return check }
+        val check_nanos = check?.as_nanos() ?: 0
+        return if check_nanos < rebuild_poll().as_nanos() { check } else { rebuild }
+    }
+
+    /// How long until a check is due; `null` when none is waiting.
+    fun check_wait(): Duration? {
         if self.dirty.is_empty() { return null }
         val since = self.edited_at?.elapsed() ?: return Option.Some(Duration.zero())
         if since.as_nanos() >= debounce().as_nanos() { return Option.Some(Duration.zero()) }
@@ -93,7 +120,7 @@ impl SourceService {
     /// Checks every dirty crate once its debounce has passed: the messages
     /// that publish what the checks found.
     pub mutating fun run_due_checks(documents: &Documents): List<String> {
-        var messages = List.new<String>()
+        var messages = self.run_due_rebuild(documents)
         if !self.check_is_due() { return messages }
         val names = self.dirty.clone()
         self.dirty = List.new<String>()
@@ -108,12 +135,12 @@ impl SourceService {
     }
 
     fun check_is_due(): bool {
-        val wait = self.wait_time()
+        val wait = self.check_wait()
         return wait.is_some() && (wait?.as_nanos() ?: 1) == 0
     }
 
     mutating fun publish_answer(entry: &CrateEntry, answer: &Answer, documents: &Documents,
-                                messages: &var List<String>): void {
+        messages: &var List<String>): void {
         val files = OpenFiles { documents: documents.clone(), utf8: self.utf8 }
         val found = answer.diagnostics_by_file(&files)
         if found.is_none() {
@@ -166,6 +193,7 @@ impl SourceService {
         }
         messages.push(log_message(3, "checking with ${project.kflatc}"))
         self.project = Option.Some(project.clone())
+        self.known_manifests = self.manifests_on_disk()
         return true
     }
 

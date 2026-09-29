@@ -107,8 +107,10 @@ impl Komp {
 
     /// `name@version` for every source in the cache, until `forget`.
     pub mutating fun cached_sources(): List<String> {
-        val known = self.cached?.clone()
-        if known.is_some() { return known ?: List.new<String>() }
+        when (&self.cached) {
+            Some(sources) => return sources.clone()
+            None => {}
+        }
         val answer = self.run("cache list --format=json", "") ?: return List.new<String>()
         val sources = parse_cached(answer.as_str())
         self.cached = Option.Some(sources.clone())

@@ -30,6 +30,8 @@ pub struct Server {
     var source: SourceService
     /// kf.toml and lint.toml, answered from what komp reports.
     var manifests: ManifestService
+    /// The client lets the server ask it to watch files.
+    var watch_files: bool
 }
 
 impl Server {
@@ -37,7 +39,7 @@ impl Server {
     pub static fun new(komp: str): Server {
         return Server {
             phase: Phase.Starting, documents: Documents.new(), source: SourceService.new(komp),
-            manifests: ManifestService.new(komp)
+            manifests: ManifestService.new(komp), watch_files: false
         }
     }
 
@@ -122,8 +124,11 @@ impl Server {
         while encoding in &body.strings_at("params.capabilities.general.positionEncodings") {
             if encoding.as_str() == "utf-8" { utf8 = true }
         }
-        self.source.configure(root.as_str(), utf8)
+        val run_lenses = body.bool_at("params.capabilities.experimental.kflatRunCommands") ?: false
+        self.source.configure(root.as_str(), utf8, run_lenses)
         val inlay_refresh = body.bool_at("params.capabilities.workspace.inlayHint.refreshSupport") ?: false
+        val watching = "params.capabilities.workspace.didChangeWatchedFiles.dynamicRegistration"
+        self.watch_files = body.bool_at(watching) ?: false
         self.manifests.configure(utf8, inlay_refresh)
         return capabilities(utf8)
     }
@@ -131,6 +136,15 @@ impl Server {
     mutating fun notified(method: str, body: str, messages: &var List<String>): void {
         if self.phase != Phase.Running { return }
         when method {
+            "initialized" => {
+                if self.watch_files {
+                    val params = watched_manifests()
+                    messages.push(server_request("komp-lsp-watch", "client/registerCapability", params.as_str()))
+                }
+            }
+            "workspace/didChangeWatchedFiles" => {
+                while path in &changed_paths(body) { self.manifest_changed(path.as_str(), messages) }
+            }
             "textDocument/didOpen" => {
                 val text = body.string_at("params.textDocument.text") ?: return
                 self.edited(body, text.as_str(), messages)
@@ -142,8 +156,8 @@ impl Server {
             "textDocument/didSave" => {
                 val uri = body.string_at("params.textDocument.uri") ?: return
                 val path = uri.as_str().file_path() ?: return
-                val text = self.documents.text_of(path.as_str())
-                self.manifests.saved(path.as_str(), text.as_str(), messages)
+                if path.as_str().ends_with(".kf") { self.source.saved(path.as_str()) }
+                self.manifest_changed(path.as_str(), messages)
             }
             "textDocument/didClose" => {
                 val uri = body.string_at("params.textDocument.uri") ?: return
@@ -171,6 +185,32 @@ impl Server {
             self.source.edited(path.as_str(), text, messages)
         }
     }
+}
+
+/// A file komp reads was saved or changed on disk.
+mutating fun Server.manifest_changed(path: str, messages: &var List<String>): void {
+    self.manifests.saved(path, &self.documents, messages)
+    if path.ends_with("/kf.toml") { self.source.manifest_changed(path, &self.documents, messages) }
+}
+
+/// The paths of `workspace/didChangeWatchedFiles`'s changes.
+fun changed_paths(body: str): List<String> {
+    var out = List.new<String>()
+    var reader = body.value_at("params.changes") ?: return out
+    if !reader.begin_array() { return out }
+    while reader.array_has_next() {
+        if !reader.begin_object() { return out }
+        while reader.object_has_next() {
+            val key = reader.read_key()
+            if key.as_str() != "uri" {
+                reader.skip_value()
+                continue
+            }
+            val path = reader.read_string().as_str().file_path()
+            if path.is_some() { out.push(path ?: String.from("")) }
+        }
+    }
+    return out
 }
 
 /// The text of a full-document change: the last entry of `contentChanges`.

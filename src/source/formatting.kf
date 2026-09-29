@@ -1,0 +1,68 @@
+// `textDocument/formatting`: the open text run through `komp fmt`, which
+// uses the formatter the project pins, and handed back as one edit.
+
+import alloc.list.*
+import alloc.path.Path
+import json.writer.*
+import komp_lsp.protocol.*
+import std.fs.TempDir
+import std.fs.write_text
+import std.process.Command
+
+/// One edit replacing the whole of `path`'s open text with `komp fmt`'s
+/// result; no edits when it is formatted already, or the formatter could
+/// not run, which is said once.
+pub mutating fun SourceService.format(path: str, documents: &Documents, messages: &var List<String>): String {
+    val text = documents.text_of(path)
+    val scratch = TempDir.new("komp-lsp-fmt")
+    val copy = "${scratch.path().as_str()}/${path.file_name()}"
+    if write_text(copy.as_str(), text.as_str()).is_err() { return String.from("[]") }
+    var command = Command.new(self.komp.as_str())
+    command.arg("fmt")
+    command.arg(copy.as_str())
+    command.current_dir(Path.new(self.crate_dir(path).as_str()))
+    command.stdout_to(Path.new("/dev/null"))
+    if !command.status().success() {
+        if !self.format_failed {
+            self.format_failed = true
+            messages.push(show_message(2, "komp fmt could not format ${path}; `komp tool install komp_fmt` adds it"))
+        }
+        return String.from("[]")
+    }
+    val formatted = disk_text(copy.as_str())
+    if formatted.is_empty() || formatted.as_str() == text.as_str() { return String.from("[]") }
+    val view = TextView.of(text.as_str(), self.utf8)
+    var writer = JsonWriter.new()
+    writer.begin_array()
+    writer.begin_object()
+    writer.key("range")
+    writer.write_range(&view, 0, text.byte_len())
+    writer.field_string("newText", formatted.as_str())
+    writer.end_object()
+    writer.end_array()
+    return writer.finish()
+}
+
+/// The root of the crate holding `path`, or its directory when no loaded
+/// crate holds it.
+fun SourceService.crate_dir(path: str): String {
+    return when (self.project?.crate_for(path)) {
+        Some(entry) => entry.root.clone()
+        None => path.directory()
+    }
+}
+
+/// The last component of a path.
+fun str.file_name(): String {
+    var at = self.byte_len()
+    while at > 0 && self.byte(at - 1) != 47 { at = at - 1 }
+    return self.substring(at, self.byte_len())
+}
+
+/// The directory holding a path; "." for a bare name.
+fun str.directory(): String {
+    var at = self.byte_len()
+    while at > 0 && self.byte(at - 1) != 47 { at = at - 1 }
+    if at == 0 { return String.from(".") }
+    return self.substring(0, at - 1)
+}

@@ -53,8 +53,12 @@ jobs:
 
       - name: An editor session against the built server
         run: |
+          komp tool install komp_fmt
           komp build .
           python3 tests/session.py target/kflat/komp_lsp
 
       - name: kf.toml and lint.toml in an editor session
         run: python3 tests/manifests.py target/kflat/komp_lsp
+
+      - name: A two-crate workspace in an editor session
+        run: python3 tests/workspace.py target/kflat/komp_lsp

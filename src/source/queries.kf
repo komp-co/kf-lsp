@@ -12,11 +12,15 @@ impl SourceService {
     /// compiler cannot answer. A rename the compiler refuses is an error
     /// reply, so the whole reply to request `id` is returned.
     pub mutating fun request(id: str, method: str, body: str, path: str, empty: str, documents: &Documents,
-                             messages: &var List<String>): String {
+        messages: &var List<String>): String {
         if method == "textDocument/codeAction" {
             val first = body.int_at("params.range.start.line") ?: 0
             val last = body.int_at("params.range.end.line") ?: first
             return id.result_reply(self.fixes.code_actions(path, first as uint64, last as uint64).as_str())
+        }
+        if method == "textDocument/codeLens" { return id.result_reply(self.run_lenses(path, documents).as_str()) }
+        if method == "textDocument/formatting" {
+            return id.result_reply(self.format(path, documents, messages).as_str())
         }
         if !self.ensure_compiler(messages) { return id.result_reply(empty) }
         val view = documents.view_of(path, self.utf8)
@@ -49,7 +53,7 @@ impl SourceService {
 
     /// A rename's edits, or the compiler's reason for refusing it.
     mutating fun rename(id: str, body: str, path: str, view: &TextView, files: &OpenFiles,
-                        messages: &var List<String>): String {
+        messages: &var List<String>): String {
         val new_name = body.string_at("params.newName") ?: ""
         val offset = view.request_offset(body)
         val answer = self.ask_typed("rename", path, offset as int64, new_name.as_str(), messages)
@@ -73,7 +77,7 @@ impl SourceService {
     /// The compiler's answer to a typed `question` about `path`: at `offset`
     /// unless it is negative, and naming `new_name` unless it is empty.
     mutating fun ask_typed(question: str, path: str, offset: int64, new_name: str,
-                           messages: &var List<String>): Answer {
+        messages: &var List<String>): Answer {
         val project = self.project?.clone() ?: return Answer.of("")
         val entry = project.crate_for(path) ?: return Answer.of("")
         var writer = JsonWriter.object()
