@@ -78,8 +78,8 @@ each request to the service for its file.
 
 ## Building it
 
-Build it with an installed kflat: a release from 0.6.0 on, the version in
-`kflat-version` being the one CI builds with.
+Build it with an installed kflat. The `kflat` pin in `kf.toml` names the
+releases it builds with; komp installs a fitting toolchain when its own does not.
 
 ```sh
 komp build .        # target/kflat/komp_lsp

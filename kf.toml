@@ -3,6 +3,7 @@ name = "komp_lsp"
 description = "The KFlat language server; editors start it with `komp lsp`"
 version = "0.2.0"
 kind = "bin"
+kflat = "0.6"
 
 [dependencies]
 json = "0.2"
