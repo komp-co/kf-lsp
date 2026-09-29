@@ -1,0 +1,81 @@
+import alloc.list.*
+import komp_lsp.komp.*
+
+fun fact(name: str, requirement: str, locked: str, allowed: str, newest: str, error: str): OutdatedRow {
+    return OutdatedRow {
+        section: String.from("dependencies"), name: String.from(name), requirement: String.from(requirement),
+        index: String.from(""), locked: String.from(locked), allowed: String.from(allowed),
+        newest: String.from(newest), error: String.from(error)
+    }
+}
+
+fun problems_of(text: str, row: OutdatedRow, cached: str, failure: str): List<Problem> {
+    var facts = List.new<OutdatedRow>()
+    facts.push(row)
+    var sources = List.new<String>()
+    if !cached.is_empty() { sources.push(String.from(cached)) }
+    return Manifest.parse(text).problems(&facts, &sources, failure)
+}
+
+fun manifest(): String {
+    return String.from("[dependencies]\njson = \"0.1\"\n")
+}
+
+@test
+fun an_up_to_date_cached_dependency_has_no_problem(): void {
+    val found = problems_of(manifest().as_str(), fact("json", "0.1", "0.1.0", "0.1.0", "0.1.0", ""), "json@0.1.0", "")
+    assert_eq(found.size(), 0, "nothing to report")
+}
+
+@test
+fun an_index_error_is_on_the_name(): void {
+    val row = fact("json", "0.1", "", "", "", "the index file:///x has no package `json`")
+    val found = problems_of(manifest().as_str(), row, "", "")
+    assert_eq(found[0].severity, error_severity(), "an error")
+}
+
+@test
+fun an_uncached_index_is_only_information(): void {
+    val row = fact("json", "0.1", "", "", "", "the index file:///x is not in the cache yet; run once without --offline")
+    val found = problems_of(manifest().as_str(), row, "", "")
+    assert_eq(found[0].severity, information_severity(), "not an error")
+}
+
+@test
+fun an_unsatisfiable_requirement_raises_to_the_newest(): void {
+    val found = problems_of("[dependencies]\njson = \"0.9\"\n", fact("json", "0.9", "", "", "1.2.0", ""), "", "")
+    assert_eq(found[0].raise_to.as_str(), "1.2", "raised with two parts")
+}
+
+@test
+fun an_unlocked_dependency_is_not_fetched_yet(): void {
+    val found = problems_of(manifest().as_str(), fact("json", "0.1", "", "0.1.0", "0.1.0", ""), "", "")
+    assert_eq(found[0].message.as_str(), "`json` is not fetched yet: kf.lock holds no version of it", "unlocked")
+}
+
+@test
+fun a_locked_version_missing_from_the_cache_is_reported(): void {
+    val found = problems_of(manifest().as_str(), fact("json", "0.1", "0.1.0", "0.1.0", "0.1.0", ""), "", "")
+    assert_eq(found[0].message.as_str(), "`json` 0.1.0 is locked but not in the cache", "uncached")
+}
+
+@test
+fun a_newer_release_outside_the_requirement_is_a_hint_on_the_requirement(): void {
+    val found = problems_of(manifest().as_str(), fact("json", "0.1", "0.1.0", "0.1.0", "0.2.0", ""), "json@0.1.0", "")
+    val text = manifest()
+    assert_eq(text.substring(found[0].start, found[0].end).as_str(), "0.1", "the requirement's text")
+}
+
+@test
+fun a_failure_naming_a_dependency_is_on_its_row(): void {
+    val row = fact("json", "0.1", "0.1.0", "0.1.0", "0.1.0", "")
+    val found = problems_of(manifest().as_str(), row, "json@0.1.0", "no tag `v9` in `json`")
+    assert_eq(found[0].start, 15, "on json's key")
+}
+
+@test
+fun a_failure_naming_no_dependency_is_on_the_first_line(): void {
+    val row = fact("json", "0.1", "0.1.0", "0.1.0", "0.1.0", "")
+    val found = problems_of(manifest().as_str(), row, "json@0.1.0", "cannot write kf.lock")
+    assert_eq(found[0].end, 14, "the first line")
+}

@@ -35,6 +35,8 @@ pub struct Komp {
     var versions: List<VersionsOf>
     var outdated: List<OutdatedOf>
     var lints: List<LintsOf>
+    /// `name@version` of each cached source, once asked.
+    var cached: List<String>?
     /// The questions komp could not answer, until `forget` is called.
     var unanswered: List<String>
 }
@@ -43,7 +45,8 @@ impl Komp {
     pub static fun new(path: str): Komp {
         return Komp {
             path: String.from(path), catalog: List.new<CatalogPackage>(), versions: List.new<VersionsOf>(),
-            outdated: List.new<OutdatedOf>(), lints: List.new<LintsOf>(), unanswered: List.new<String>()
+            outdated: List.new<OutdatedOf>(), lints: List.new<LintsOf>(), cached: null,
+            unanswered: List.new<String>()
         }
     }
 
@@ -102,11 +105,14 @@ impl Komp {
         return facts
     }
 
-    /// `name@version` for every source in the cache, which fetching changes,
-    /// so it is asked each time.
-    pub fun cached_sources(): List<String> {
+    /// `name@version` for every source in the cache, until `forget`.
+    pub mutating fun cached_sources(): List<String> {
+        val known = self.cached?.clone()
+        if known.is_some() { return known ?: List.new<String>() }
         val answer = self.run("cache list --format=json", "") ?: return List.new<String>()
-        return parse_cached(answer.as_str())
+        val sources = parse_cached(answer.as_str())
+        self.cached = Option.Some(sources.clone())
+        return sources
     }
 
     /// The running komp's version and every installed toolchain's.
@@ -128,7 +134,18 @@ impl Komp {
             if known.dir.as_str() != dir { lints.push(known.clone()) }
         }
         self.lints = lints
+        self.cached = null
         self.unanswered = List.new<String>()
+    }
+
+    /// What `komp outdated --format=json` printed for `dir` when it brought
+    /// the indexes up to date, kept in place of the cached reading. The
+    /// catalog and versions are read again from the fresh checkouts.
+    pub mutating fun learned_outdated(dir: str, answer: str): void {
+        self.forget(dir)
+        self.outdated.push(OutdatedOf { dir: String.from(dir), rows: OutdatedRow.parse_list(answer) })
+        self.catalog = List.new<CatalogPackage>()
+        self.versions = List.new<VersionsOf>()
     }
 
     /// `run`, remembering a question that fails so it is not asked again.

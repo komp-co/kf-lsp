@@ -1,0 +1,42 @@
+fun requirement_text(text: str): String {
+    val manifest = Manifest.parse(text)
+    val span = manifest.requirement_span(&manifest.rows[0]) ?: return String.from("<none>")
+    return text.substring(span.start, span.end)
+}
+
+@test
+fun a_plain_requirement_is_the_quoted_value(): void {
+    assert_eq(requirement_text("json = \"0.1\"\n").as_str(), "0.1", "inside the quotes")
+}
+
+@test
+fun an_inline_table_requirement_is_its_version_member(): void {
+    val text = "json = { index = \"extra\", version = \"0.2\" }\n"
+    assert_eq(requirement_text(text).as_str(), "0.2", "the version member")
+}
+
+@test
+fun a_git_dependency_has_no_requirement(): void {
+    val text = "json = { git = \"https://example.com/json\", rev = \"abc\" }\n"
+    assert_eq(requirement_text(text).as_str(), "<none>", "no version member")
+}
+
+@test
+fun a_two_part_requirement_is_raised_to_two_parts(): void {
+    assert_eq(raised_requirement("0.1", "0.2.0").as_str(), "0.2", "major and minor")
+}
+
+@test
+fun a_three_part_requirement_is_raised_to_the_whole_version(): void {
+    assert_eq(raised_requirement("1.2.3", "1.4.0").as_str(), "1.4.0", "every part")
+}
+
+@test
+fun a_one_part_requirement_is_raised_to_the_major(): void {
+    assert_eq(raised_requirement("1", "2.3.0").as_str(), "2", "the major")
+}
+
+@test
+fun a_requirement_that_is_not_dotted_is_not_raised(): void {
+    assert_eq(raised_requirement(">=0.1", "0.2.0").as_str(), "", "nothing to write")
+}

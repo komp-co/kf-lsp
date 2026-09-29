@@ -1,6 +1,7 @@
 // What the server tells the client it can do, in `initialize`'s result.
 
 import json.writer.*
+import komp_lsp.manifest.manifest_commands
 import komp_lsp.source.semantic_token_legend
 
 /// `initialize`'s result; `utf8` when the client counts characters in bytes.
@@ -35,6 +36,11 @@ fun capabilities(utf8: bool): String {
     writer.end_object()
     writer.field_raw("renameProvider", "{\"prepareProvider\":true}")
     writer.field_raw("codeActionProvider", "{\"codeActionKinds\":[\"quickfix\"]}")
+    writer.field_raw("codeLensProvider", "{}")
+    writer.key("executeCommandProvider")
+    writer.begin_object()
+    writer.field_raw("commands", manifest_commands().as_str())
+    writer.end_object()
     writer.end_object()
     writer.key("serverInfo")
     writer.begin_object()

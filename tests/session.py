@@ -168,7 +168,7 @@ def main():
            len(actions) == 1 and actions[0]["title"] == "change to `sum`" and edit["newText"] == "sum"
            and edit["range"] == {"start": {"line": 10, "character": 13}, "end": {"line": 10, "character": 17}})
 
-    send({"id": 2, "method": "textDocument/codeLens", "params": {}})
+    send({"id": 2, "method": "textDocument/linkedEditingRange", "params": {}})
     expect("an unknown request is MethodNotFound",
            until(lambda m: m.get("id") == 2)["error"]["code"] == -32601)
     send({"id": 3, "method": "shutdown"})

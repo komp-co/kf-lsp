@@ -1,0 +1,50 @@
+// Code lenses on kf.toml: Fetch and Update all, above `[dependencies]`, run
+// as `workspace/executeCommand`s the server carries out in the background.
+
+import json.writer.*
+import komp_lsp.protocol.*
+
+/// The commands the lenses name, as `executeCommandProvider` lists them.
+pub fun manifest_commands(): String {
+    return String.from("[\"komp.fetch\",\"komp.update\"]")
+}
+
+/// `textDocument/codeLens`'s result for the kf.toml at `path`.
+fun Manifest.code_lenses(path: str, view: &TextView): String {
+    val line = self.dependencies_line()
+    var writer = JsonWriter.new()
+    writer.begin_array()
+    writer.write_lens(view, line, "Fetch", "komp.fetch", path.parent_dir().as_str())
+    writer.write_lens(view, line, "Update all", "komp.update", path.parent_dir().as_str())
+    writer.end_array()
+    return writer.finish()
+}
+
+/// Where `[dependencies]` starts; the first line when there is none.
+fun Manifest.dependencies_line(): uint64 {
+    val text = self.text.as_str()
+    var start: uint64 = 0
+    while start < text.byte_len() {
+        val end = line_end(text, start)
+        val header = table_name(text.substring(start, end).as_str())
+        if header.is_some() && (header ?: String.from("")).as_str() == "dependencies" { return start }
+        start = end + 1
+    }
+    return 0
+}
+
+mutating fun JsonWriter.write_lens(view: &TextView, at: uint64, title: str, command: str, dir: str): void {
+    self.begin_object()
+    self.key("range")
+    self.write_range(view, at, at)
+    self.key("command")
+    self.begin_object()
+    self.field_string("title", title)
+    self.field_string("command", command)
+    self.key("arguments")
+    self.begin_array()
+    self.write_string(dir)
+    self.end_array()
+    self.end_object()
+    self.end_object()
+}

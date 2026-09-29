@@ -67,12 +67,21 @@ impl Server {
 
     /// How long until a check is due; `null` when none is waiting.
     pub fun wait_time(): Duration? {
-        return self.source.wait_time()
+        val checks = self.source.wait_time()
+        val jobs = self.manifests.wait_time()
+        if checks.is_none() { return jobs }
+        if jobs.is_none() { return checks }
+        val check_nanos = checks?.as_nanos() ?: 0
+        val job_nanos = jobs?.as_nanos() ?: 0
+        return if check_nanos < job_nanos { checks } else { jobs }
     }
 
-    /// The messages that publish what the checks now due found.
+    /// The messages that publish what the checks now due found, and what a
+    /// finished komp job reported.
     pub mutating fun run_due_checks(): List<String> {
-        return self.source.run_due_checks(&self.documents)
+        var messages = self.source.run_due_checks(&self.documents)
+        while message in &self.manifests.run_due_jobs(&self.documents) { messages.push(message.clone()) }
+        return messages
     }
 
     mutating fun answer(id: str, method: str, body: str, messages: &var List<String>): String {
@@ -92,6 +101,10 @@ impl Server {
                 if method == "initialize" {
                     return id.error_reply(ErrorCode.InvalidRequest, "initialize was already sent")
                 }
+                if method == "workspace/executeCommand" {
+                    self.manifests.execute(body, messages)
+                    return id.result_reply("null")
+                }
                 val reply = self.request(id, method, body, messages)
                 if reply.is_none() { return id.error_reply(ErrorCode.MethodNotFound, "no handler for ${method}") }
                 reply ?: String.from("")
@@ -110,7 +123,8 @@ impl Server {
             if encoding.as_str() == "utf-8" { utf8 = true }
         }
         self.source.configure(root.as_str(), utf8)
-        self.manifests.configure(utf8)
+        val inlay_refresh = body.bool_at("params.capabilities.workspace.inlayHint.refreshSupport") ?: false
+        self.manifests.configure(utf8, inlay_refresh)
         return capabilities(utf8)
     }
 
@@ -127,13 +141,19 @@ impl Server {
             }
             "textDocument/didSave" => {
                 val uri = body.string_at("params.textDocument.uri") ?: return
-                self.manifests.saved((uri.as_str().file_path() ?: String.from("")).as_str())
+                val path = uri.as_str().file_path() ?: return
+                val text = self.documents.text_of(path.as_str())
+                self.manifests.saved(path.as_str(), text.as_str(), messages)
             }
             "textDocument/didClose" => {
                 val uri = body.string_at("params.textDocument.uri") ?: return
                 val path = self.documents.path_of(uri.as_str()) ?: return
                 self.documents.close(uri.as_str())
-                if !path.as_str().is_manifest() { self.source.closed(path.as_str(), messages) }
+                if path.as_str().is_manifest() {
+                    self.manifests.closed(path.as_str(), messages)
+                } else {
+                    self.source.closed(path.as_str(), messages)
+                }
             }
             _ => {}
         }
@@ -145,7 +165,11 @@ impl Server {
         val uri = body.string_at("params.textDocument.uri") ?: return
         val path = uri.as_str().file_path() ?: return
         self.documents.open(uri.as_str(), path.as_str(), text)
-        if !path.as_str().is_manifest() { self.source.edited(path.as_str(), text, messages) }
+        if path.as_str().is_manifest() {
+            self.manifests.edited(path.as_str(), text, messages)
+        } else {
+            self.source.edited(path.as_str(), text, messages)
+        }
     }
 }
 

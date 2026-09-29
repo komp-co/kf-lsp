@@ -10,6 +10,7 @@ packages and lints. `KOMP_BIN` names the komp to use; it must know
 """
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -60,6 +61,7 @@ def main():
     lints_uri = "file://" + project + "/lint.toml"
 
     child = subprocess.Popen([server], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    signal.alarm(120)
 
     def send(message):
         body = json.dumps(dict(jsonrpc="2.0", **message)).encode()
@@ -88,6 +90,14 @@ def main():
             message = receive()
             if message.get("id") == next_id[0]:
                 return message["result"]
+
+    def next_diagnostics(uri, holds=lambda diagnostics: True):
+        while True:
+            message = receive()
+            params = message.get("params") or {}
+            if message.get("method") == "textDocument/publishDiagnostics" and params["uri"] == uri \
+                    and holds(params["diagnostics"]):
+                return params["diagnostics"]
 
     def expect(what, holds):
         print(("PASS  " if holds else "FAIL  ") + what)
@@ -140,6 +150,29 @@ def main():
     expect("hover on a lint gives its level and options",
            hover is not None and "deny here" in hover["contents"]["value"]
            and "max_columns" in hover["contents"]["value"])
+
+    open_document(manifest_uri, manifest, 5)
+    diagnostics = next_diagnostics(manifest_uri)
+    by_severity = {d["severity"]: d for d in diagnostics}
+    expect("a locked version missing from the cache is information on the name",
+           by_severity.get(3, {}).get("range", {}).get("start") == {"line": 6, "character": 0})
+    expect("a newer release outside the requirement is a hint on the requirement",
+           by_severity.get(4, {}).get("range") == {"start": {"line": 6, "character": 8},
+                                                  "end": {"line": 6, "character": 11}})
+    actions = ask("textDocument/codeAction", {"textDocument": {"uri": manifest_uri},
+                                              "range": {"start": {"line": 6, "character": 9},
+                                                        "end": {"line": 6, "character": 9}},
+                                              "context": {"diagnostics": []}})
+    edits = [a["edit"]["changes"][manifest_uri][0]["newText"] for a in actions]
+    expect("the hint's quick fix raises the requirement", [a["title"] for a in actions] == ['Require "0.2"']
+           and edits == ["0.2"])
+    lenses = ask("textDocument/codeLens", {"textDocument": {"uri": manifest_uri}})
+    expect("Fetch and Update all sit above [dependencies]",
+           [(l["command"]["title"], l["command"]["command"], l["range"]["start"]["line"]) for l in lenses]
+           == [("Fetch", "komp.fetch", 5), ("Update all", "komp.update", 5)])
+    ask("workspace/executeCommand", lenses[0]["command"])
+    failed = next_diagnostics(manifest_uri, lambda found: any("fetching failed" in d["message"] for d in found))
+    expect("a failed fetch is an error on the manifest", any(d["severity"] == 1 for d in failed))
 
     ask("shutdown", None)
     send({"method": "exit"})
