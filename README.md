@@ -17,7 +17,11 @@ how the workspace is laid out.
 On the first opened file it runs `komp check` on the workspace once, so every
 dependency's interface is built, then starts `kflatc serve`. Each open and
 edit is staged with the compiler, and the file's crate is checked once typing
-pauses for 300 ms. The questions that need types (hover, definition,
+pauses for 300 ms, with the workspace crates that depend on it. A check
+names the crate's workspace dependencies as `sources`, so it is made against
+their unsaved text; saving a file also has `komp check` write the workspace's
+interfaces in the background, for a kflatc before 0.7.0, which reads only
+those. The questions that need types (hover, definition,
 references, signature help, completion, inlay hints, semantic tokens and
 rename) type the file's crate and what it loads once, and answer from that
 until the next edit. A rename the compiler refuses, because the new name is
@@ -128,7 +132,8 @@ lint completion, hover, the version hints, the diagnostics and the quick fix
 that raises a requirement, the lenses, and a Fetch that fails.
 `tests/workspace.py` renames a library function in a two-crate workspace and
 saves, and checks that the call in the other crate is reported, then cleared
-once it is renamed back.
+once it is renamed back; then hides it without saving, which is reported as
+it is typed.
 
 ## Neovim
 
@@ -149,9 +154,5 @@ For highlighting, point a TextMate-compatible plugin at the grammar in
 
 ## Limits for now
 
-- A crate that depends on the edited one is checked again once the edit is
-  saved: `komp check` writes the saved crate's interface in the background,
-  and the workspace crates that load it are checked when it changed. Until
-  the save, they see the interface as it was.
 - Memory grows with each check: the compiler does not yet free a check's
   state. Restarting the server clears it.

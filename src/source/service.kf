@@ -122,9 +122,10 @@ impl SourceService {
     pub mutating fun run_due_checks(documents: &Documents): List<String> {
         var messages = self.run_due_rebuild(documents)
         if !self.check_is_due() { return messages }
-        val names = self.dirty.clone()
+        val dirty = self.dirty.clone()
         self.dirty = List.new<String>()
         val project = self.project?.clone() ?: return messages
+        val names = project.with_dependents(&dirty)
         while name in &names {
             val entry = project.crate_named(name.as_str()) ?: continue
             val answer = self.ask_compiler("check", project.check_params(&entry).as_str(), &var messages)

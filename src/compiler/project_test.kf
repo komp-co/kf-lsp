@@ -49,8 +49,34 @@ fun check_params_carry_the_crate(): void {
     val app = project.crate_named("app") ?: empty_entry()
     val expected = String.from("{\"target_dir\":\"/w/target/kflat\",\"crate\":{\"name\":\"app\",\"root\":\"/w/app\",") +
         "\"loads\":[\"core\",\"alloc\"],\"lints\":[\"dead_code=allow\"]," +
-        "\"lint_options\":[{\"name\":\"too_many_parameters\",\"key\":\"max\",\"value\":\"5\"}]}}"
+        "\"lint_options\":[{\"name\":\"too_many_parameters\",\"key\":\"max\",\"value\":\"5\"}]},\"sources\":[]}"
     assert_eq(project.check_params(&app).as_str(), expected.as_str(), "the metadata row")
+}
+
+fun workspace(): Project {
+    val text = String.from("{\"kflatc\":\"/k\",\"target_dir\":\"/t\",\"crates\":[") +
+        "{\"name\":\"core\",\"root\":\"/c\",\"member\":false,\"loads\":[],\"lints\":[]}," +
+        "{\"name\":\"geometry\",\"root\":\"/g\",\"member\":true,\"loads\":[\"core\"],\"lints\":[]}," +
+        "{\"name\":\"app\",\"root\":\"/a\",\"member\":true,\"loads\":[\"core\",\"geometry\"],\"lints\":[]}," +
+        "{\"name\":\"tool\",\"root\":\"/o\",\"member\":true,\"loads\":[\"core\"],\"lints\":[]}]}"
+    return Project.parse(text.as_str()) ?: Project { kflatc: "", target_dir: "", crates: List.new<CrateEntry>() }
+}
+
+@test
+fun check_params_name_the_workspace_dependencies_as_sources(): void {
+    val project = workspace()
+    val app = project.crate_named("app") ?: empty_entry()
+    val params = project.check_params(&app)
+    val expected = "\"sources\":[{\"name\":\"geometry\",\"root\":\"/g\",\"loads\":[\"core\"]}]}"
+    assert_eq(params.as_str().ends_with(expected), true, "geometry, not core")
+}
+
+@test
+fun an_edited_crate_brings_its_dependents(): void {
+    var names = List.new<String>()
+    names.push(String.from("geometry"))
+    val found = workspace().with_dependents(&names)
+    assert_eq(found.size() == 2 && found[0].as_str() == "geometry" && found[1].as_str() == "app", true, "not tool")
 }
 
 @test

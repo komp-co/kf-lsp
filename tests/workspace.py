@@ -5,7 +5,8 @@
 
 `app` calls `area` from `geometry`. Renaming it in geometry and saving
 publishes the broken call in app, which is not being edited; renaming it
-back and saving clears it. `KOMP_BIN` names the komp to use.
+back and saving clears it. Then the same without saving: making `area`
+private is reported in app as it is typed. `KOMP_BIN` names the komp to use.
 """
 import json
 import os
@@ -90,6 +91,16 @@ def main():
 
     save_library(LIBRARY, 3)
     expect("renaming it back and saving clears the caller", diagnostics_of(program_uri) == [])
+
+    def edit_library(text, version):
+        send({"method": "textDocument/didChange",
+              "params": {"textDocument": {"uri": library_uri, "version": version}, "contentChanges": [{"text": text}]}})
+
+    edit_library(LIBRARY.replace("pub fun", "fun"), 4)
+    unsaved = diagnostics_of(program_uri)
+    expect("an unsaved edit that hides the function reaches its caller", len(unsaved) > 0)
+    edit_library(LIBRARY, 5)
+    expect("undoing the unsaved edit clears the caller", diagnostics_of(program_uri) == [])
 
     send({"id": 2, "method": "shutdown"})
     while receive().get("id") != 2:
