@@ -1,0 +1,15 @@
+fun watched_body(): String {
+    val lock = "{\"uri\":\"file:///p/kf.lock\",\"type\":2}"
+    val manifest = "{\"type\":1,\"uri\":\"file:///p/kf.toml\"}"
+    return "{\"params\":{\"changes\":[${lock},${manifest}]}}"
+}
+
+@test
+fun watched_changes_name_their_paths(): void {
+    assert_eq(changed_paths(watched_body().as_str()).size(), 2, "both changes")
+}
+
+@test
+fun a_watched_change_keeps_its_order(): void {
+    assert_eq(changed_paths(watched_body().as_str())[1].as_str(), "/p/kf.toml", "the second change")
+}

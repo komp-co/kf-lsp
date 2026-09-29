@@ -39,17 +39,23 @@ pub mutating fun ManifestService.run_due_jobs(documents: &Documents): List<Strin
     val finished = self.jobs[0].poll() ?: return messages
     self.jobs = List.new<KompJob>()
     self.finished(&finished, &var messages)
+    self.republish(finished.dir.as_str(), documents, &var messages)
+    self.start_next(&var messages)
+    return messages
+}
+
+/// Publishes again every open kf.toml of the project in `dir`, and asks a
+/// client that allows it to redraw its inlay hints.
+mutating fun ManifestService.republish(dir: str, documents: &Documents, messages: &var List<String>): void {
     while path in &self.open.clone() {
-        if path.as_str().parent_dir().as_str() == finished.dir.as_str() {
-            self.publish(path.as_str(), documents.text_of(path.as_str()).as_str(), &var messages)
+        if path.as_str().parent_dir().as_str() == dir {
+            self.publish(path.as_str(), documents.text_of(path.as_str()).as_str(), messages)
         }
     }
     if self.inlay_refresh {
         self.requests_sent = self.requests_sent + 1
-        messages.push(server_request("komp-lsp-${self.requests_sent}".as_str(), "workspace/inlayHint/refresh"))
+        messages.push(server_request("komp-lsp-${self.requests_sent}".as_str(), "workspace/inlayHint/refresh", ""))
     }
-    self.start_next(&var messages)
-    return messages
 }
 
 /// Runs `kind` on `dir` once the jobs before it have finished; one already

@@ -92,16 +92,17 @@ impl ManifestService {
         }
     }
 
-    /// A saved kf.toml, kf.lock or lint.toml changes what komp reports about
-    /// its project. An index a saved kf.toml names that is not in the cache
-    /// yet is fetched.
-    pub mutating fun saved(path: str, text: str, messages: &var List<String>): void {
+    /// A kf.toml, kf.lock or lint.toml saved or changed on disk changes what
+    /// komp reports about its project, whose open manifests are published
+    /// again. An index a kf.toml names that is not in the cache yet is
+    /// fetched.
+    pub mutating fun saved(path: str, documents: &Documents, messages: &var List<String>): void {
         val known = path.ends_with("/kf.toml") || path.ends_with("/kf.lock") || path.ends_with("/lint.toml")
         if !known { return }
         val dir = path.parent_dir()
         self.komp.forget(dir.as_str())
+        self.republish(dir.as_str(), documents, messages)
         if !path.ends_with("/kf.toml") { return }
-        self.publish(path, text, messages)
         while fact in &self.komp.outdated(dir.as_str()) {
             if fact.error.as_str().contains("not in the cache yet") {
                 self.queue(JobKind.Refresh, dir.as_str(), messages)

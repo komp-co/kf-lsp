@@ -1,0 +1,55 @@
+// A workspace kf.toml changed on disk: the project the compiler checks is
+// loaded again, and the open files staged with the new compiler.
+
+import alloc.list.*
+import komp_lsp.compiler.*
+import komp_lsp.protocol.*
+import std.fs.read_to_string
+
+/// A member kf.toml's text when the project was loaded.
+@derive(Clone)
+struct KnownManifest {
+    val path: String
+    val text: String
+}
+
+/// Every member crate's kf.toml and the workspace's, as they are on disk.
+fun SourceService.manifests_on_disk(): List<KnownManifest> {
+    var out = List.new<KnownManifest>()
+    var paths = List.new<String>()
+    paths.push("${self.root}/kf.toml")
+    val project = self.project?.clone() ?: return out
+    while entry in &project.crates {
+        val path = "${entry.root}/kf.toml"
+        if entry.member && !paths.contains(&path) { paths.push(path) }
+    }
+    while path in &paths { out.push(KnownManifest { path: path.clone(), text: disk_text(path.as_str()) }) }
+    return out
+}
+
+/// `path` was saved or changed on disk. When it is a kf.toml the loaded
+/// project read and its text differs, the compiler is restarted on the
+/// project as it now is, and every open source file staged with it again.
+pub mutating fun SourceService.manifest_changed(path: str, documents: &Documents, messages: &var List<String>): void {
+    if self.project.is_none() { return }
+    var changed = false
+    while known in &self.known_manifests {
+        if known.path.as_str() == path && known.text.as_str() != disk_text(path).as_str() { changed = true }
+    }
+    if !changed { return }
+    self.compiler = List.new<Compiler>()
+    self.project = null
+    self.known_manifests = List.new<KnownManifest>()
+    messages.push(log_message(3, "${path} changed; loading the project again"))
+    while open in &documents.paths() {
+        if !open.as_str().ends_with(".kf") { continue }
+        self.edited(open.as_str(), documents.text_of(open.as_str()).as_str(), messages)
+    }
+}
+
+fun disk_text(path: str): String {
+    return when (read_to_string(path)) {
+        Ok(text) => text.clone()
+        Err(_error) => String.from("")
+    }
+}

@@ -58,10 +58,12 @@ published when it finishes.
   each lint's group, level, description and options, and levels complete in
   values (`komp lint --list`).
 
-Saving a kf.toml, kf.lock or lint.toml asks about its project again, and so
-does a question komp could not answer, such as one to a tool that is not
-installed: it is not asked again until then. A komp older than 0.6.0 leaves
-the manifests unanswered.
+Saving a kf.toml, kf.lock or lint.toml asks about its project again, as does
+one changed on disk by `komp update` or a `git pull` when the editor lets the
+server watch files; a kf.toml whose text changed also restarts the compiler on
+the project as it now is. A question komp could not answer, such as one to a
+tool that is not installed, is not asked again until one of these. A komp
+older than 0.6.0 leaves the manifests unanswered.
 
 ## Installing it
 

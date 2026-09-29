@@ -31,6 +31,8 @@ pub struct SourceService {
     var published: List<String>
     /// The fixes those diagnostics carry.
     var fixes: List<Fix>
+    /// The workspace's kf.toml files as the loaded project read them.
+    var known_manifests: List<KnownManifest>
 }
 
 /// Open documents' text, else what is on disk: what positions in the files
@@ -51,7 +53,7 @@ impl SourceService {
         return SourceService {
             komp: String.from(komp), root: String.from(""), utf8: false, project: null,
             compiler: List.new<Compiler>(), dirty: List.new<String>(), edited_at: null,
-            published: List.new<String>(), fixes: List.new<Fix>()
+            published: List.new<String>(), fixes: List.new<Fix>(), known_manifests: List.new<KnownManifest>()
         }
     }
 
@@ -113,7 +115,7 @@ impl SourceService {
     }
 
     mutating fun publish_answer(entry: &CrateEntry, answer: &Answer, documents: &Documents,
-                                messages: &var List<String>): void {
+        messages: &var List<String>): void {
         val files = OpenFiles { documents: documents.clone(), utf8: self.utf8 }
         val found = answer.diagnostics_by_file(&files)
         if found.is_none() {
@@ -166,6 +168,7 @@ impl SourceService {
         }
         messages.push(log_message(3, "checking with ${project.kflatc}"))
         self.project = Option.Some(project.clone())
+        self.known_manifests = self.manifests_on_disk()
         return true
     }
 

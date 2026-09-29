@@ -168,6 +168,16 @@ def main():
            len(actions) == 1 and actions[0]["title"] == "change to `sum`" and edit["newText"] == "sum"
            and edit["range"] == {"start": {"line": 10, "character": 13}, "end": {"line": 10, "character": 17}})
 
+    with open(os.path.join(project, "kf.toml"), "a") as manifest:
+        manifest.write("# edited outside the editor\n")
+    send({"method": "workspace/didChangeWatchedFiles",
+          "params": {"changes": [{"uri": "file://" + os.path.realpath(project) + "/kf.toml", "type": 2}]}})
+    reloaded = until(lambda m: m.get("method") == "window/logMessage"
+                     and "loading the project again" in m["params"]["message"])
+    expect("a kf.toml changed on disk loads the project again", reloaded is not None)
+    published = until(lambda m: m.get("method") == "textDocument/publishDiagnostics")["params"]
+    expect("the open file is checked again with the new project", published["uri"] == uri)
+
     send({"id": 2, "method": "textDocument/linkedEditingRange", "params": {}})
     expect("an unknown request is MethodNotFound",
            until(lambda m: m.get("id") == 2)["error"]["code"] == -32601)

@@ -34,6 +34,11 @@ impl Documents {
         val _text = self.texts.remove(at)
     }
 
+    /// The path of every open document.
+    pub fun paths(): List<String> {
+        return self.paths.clone()
+    }
+
     pub fun path_of(uri: str): String? {
         val at = self.index_of_uri(uri) ?: return null
         return Option.Some(self.paths[at].clone())

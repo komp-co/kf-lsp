@@ -73,10 +73,12 @@ pub fun show_message(kind: int64, message: str): String {
 }
 
 /// A request from the server to the client, whose answer it does not need.
-pub fun server_request(id: str, method: str): String {
+/// `params` is JSON text, or "" for none.
+pub fun server_request(id: str, method: str, params: str): String {
     var writer = JsonWriter.object()
     writer.field_string("jsonrpc", "2.0")
     writer.field_string("id", id)
     writer.field_string("method", method)
+    if !params.is_empty() { writer.field_raw("params", params) }
     return writer.finish()
 }
