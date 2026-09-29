@@ -1,0 +1,92 @@
+// A dependency's version requirement as written in kf.toml: where it sits in
+// its row, and what it becomes when raised to take a newer version.
+
+/// A byte range of the manifest's text.
+pub struct Span {
+    pub val start: uint64
+    pub val end: uint64
+}
+
+/// Where the requirement's text sits, inside its quotes: the whole value for
+/// `json = "0.1"`, the `version` member for `json = { version = "0.1" }`;
+/// `null` when the row writes none.
+pub fun Manifest.requirement_span(row: &ManifestRow): Span? {
+    val value = self.value_of(row)
+    if value.as_str().starts_with("{") {
+        val member = value.as_str().member_value_start("version") ?: return null
+        return quoted_span(value.as_str(), member, row.value_start)
+    }
+    return quoted_span(value.as_str(), 0, row.value_start)
+}
+
+/// `requirement` raised to take `newest`, written with as many parts as it
+/// has: "0.1" and 0.2.0 give "0.2", "1.2.3" and 1.4.0 give "1.4.0"; "" when
+/// either is not a plain dotted version.
+pub fun raised_requirement(requirement: str, newest: str): String {
+    val parts = requirement.dotted_parts()
+    val newest_parts = newest.dotted_parts()
+    if parts == 0 || parts > 3 || newest_parts != 3 { return String.from("") }
+    var end: uint64 = 0
+    var seen: uint64 = 0
+    while end < newest.byte_len() {
+        if newest.byte(end) == 46 {
+            seen = seen + 1
+            if seen == parts { break }
+        }
+        end = end + 1
+    }
+    return newest.substring(0, end)
+}
+
+/// The number of dot-separated numeric parts, or 0 when anything else is
+/// written.
+fun str.dotted_parts(): uint64 {
+    if self.is_empty() { return 0 }
+    var parts: uint64 = 1
+    var digits: uint64 = 0
+    while i in 0..self.byte_len() {
+        val byte = self.byte(i)
+        if byte == 46 {
+            if digits == 0 { return 0 }
+            parts = parts + 1
+            digits = 0
+        } else if byte >= 48 && byte <= 57 {
+            digits = digits + 1
+        } else {
+            return 0
+        }
+    }
+    return if digits == 0 { 0 } else { parts }
+}
+
+/// Where the value of the inline table member `key` starts in `value`.
+fun str.member_value_start(key: str): uint64? {
+    var rest_start: uint64 = 1
+    while rest_start < self.byte_len() {
+        val rest = self.substring(rest_start, self.byte_len())
+        val comma = unquoted_index(rest.as_str(), 44) ?: rest.byte_len() as int64
+        val member = rest.substring(0, comma as uint64)
+        val equals = unquoted_index(member.as_str(), 61) ?: -1
+        val head = member.substring(0, if equals > 0 { equals as uint64 } else { 0 })
+        val name: str = head.as_str().trim()
+        if equals > 0 && name == key {
+            return Option.Some(rest_start + equals as uint64 + 1)
+        }
+        rest_start = rest_start + comma as uint64 + 1
+    }
+    return null
+}
+
+/// The quoted string starting at or after `from` in `value`, blanks skipped,
+/// as a span of the manifest; `value` starts at `base` there.
+fun quoted_span(value: str, from: uint64, base: uint64): Span? {
+    var at = from
+    while at < value.byte_len() && (value.byte(at) == 32 || value.byte(at) == 9) { at = at + 1 }
+    if at >= value.byte_len() { return null }
+    val quote = value.byte(at)
+    if quote != 34 && quote != 39 { return null }
+    var end = at + 1
+    while end < value.byte_len() && value.byte(end) != quote { end = end + 1 }
+    if end >= value.byte_len() { return null }
+    return Option.Some(Span { start: base + at + 1, end: base + end })
+}

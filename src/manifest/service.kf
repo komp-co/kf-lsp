@@ -1,22 +1,51 @@
 // The files komp reads beside the source, kf.toml and lint.toml, answered
 // from what komp reports rather than by the compiler.
 
+import alloc.list.*
 import komp_lsp.komp.*
 import komp_lsp.protocol.*
 
+/// Why the last fetch or update of a project failed, shown on its kf.toml
+/// until one succeeds.
+@derive(Clone)
+struct Failure {
+    val dir: String
+    val message: String
+}
+
 pub struct ManifestService {
     var komp: Komp
+    /// The command that runs komp, for the background jobs.
+    var komp_path: String
     var utf8: bool
+    /// The client redraws inlay hints when the server asks it to.
+    var inlay_refresh: bool
+    /// The open kf.toml files, which have diagnostics.
+    var open: List<String>
+    /// The running job, when there is one. One runs at a time, since each
+    /// may write the same cache; the rest wait their turn.
+    var jobs: List<KompJob>
+    var waiting: List<JobRequest>
+    /// The projects whose indexes a refresh has been started for.
+    var refreshed: List<String>
+    var failures: List<Failure>
+    var requests_sent: int64
 }
 
 impl ManifestService {
     pub static fun new(komp: str): ManifestService {
-        return ManifestService { komp: Komp.new(komp), utf8: false }
+        return ManifestService {
+            komp: Komp.new(komp), komp_path: String.from(komp), utf8: false, inlay_refresh: false,
+            open: List.new<String>(), jobs: List.new<KompJob>(), waiting: List.new<JobRequest>(),
+            refreshed: List.new<String>(), failures: List.new<Failure>(), requests_sent: 0
+        }
     }
 
-    /// How the client counts characters.
-    pub mutating fun configure(utf8: bool): void {
+    /// How the client counts characters, and whether it redraws inlay hints
+    /// on request.
+    pub mutating fun configure(utf8: bool, inlay_refresh: bool): void {
         self.utf8 = utf8
+        self.inlay_refresh = inlay_refresh
     }
 
     /// The result of `method` about the manifest at `path`, whose text is
@@ -25,19 +54,82 @@ impl ManifestService {
         val view = TextView.of(text, self.utf8)
         val manifest = Manifest.parse(text)
         val offset = view.request_offset(body)
-        if method == "textDocument/completion" { return self.completion(path, &manifest, &view, offset) }
-        if method == "textDocument/hover" { return self.hover(path, &manifest, &view, offset) }
-        if method != "textDocument/inlayHint" { return String.from(empty) }
-        val first = body.int_at("params.range.start.line") ?: 0
-        val last = body.int_at("params.range.end.line") ?: 9223372036854775807
-        return self.inlay_hints(path, &manifest, &view, first as uint64, last as uint64)
+        val first = (body.int_at("params.range.start.line") ?: 0) as uint64
+        val last = (body.int_at("params.range.end.line") ?: 9223372036854775807) as uint64
+        return when method {
+            "textDocument/completion" => self.completion(path, &manifest, &view, offset)
+            "textDocument/hover" => self.hover(path, &manifest, &view, offset)
+            "textDocument/inlayHint" => self.inlay_hints(path, &manifest, &view, first, last)
+            "textDocument/codeAction" => self.problems_of(path, &manifest).raise_actions(path, &view, first, last)
+            "textDocument/codeLens" => {
+                if path.ends_with("/kf.toml") { manifest.code_lenses(path, &view) } else { String.from(empty) }
+            }
+            _ => String.from(empty)
+        }
+    }
+
+    /// A manifest's new text: a kf.toml's diagnostics are published, and its
+    /// project's indexes brought up to date the first time it is seen.
+    pub mutating fun edited(path: str, text: str, messages: &var List<String>): void {
+        if !path.ends_with("/kf.toml") { return }
+        if !self.open.contains(&String.from(path)) { self.open.push(String.from(path)) }
+        self.publish(path, text, messages)
+        val dir = path.parent_dir()
+        if self.refreshed.contains(&dir) { return }
+        self.refreshed.push(dir.clone())
+        self.queue(JobKind.Refresh, dir.as_str(), messages)
+    }
+
+    /// A closed kf.toml loses its diagnostics.
+    pub mutating fun closed(path: str, messages: &var List<String>): void {
+        var open = List.new<String>()
+        while known in &self.open {
+            if known.as_str() != path { open.push(known.clone()) }
+        }
+        self.open = open
+        if path.ends_with("/kf.toml") {
+            messages.push(List.new<Problem>().diagnostics_notification(path, &TextView.of("", self.utf8)))
+        }
     }
 
     /// A saved kf.toml, kf.lock or lint.toml changes what komp reports about
-    /// its project.
-    pub mutating fun saved(path: str): void {
+    /// its project. An index a saved kf.toml names that is not in the cache
+    /// yet is fetched.
+    pub mutating fun saved(path: str, text: str, messages: &var List<String>): void {
         val known = path.ends_with("/kf.toml") || path.ends_with("/kf.lock") || path.ends_with("/lint.toml")
-        if known { self.komp.forget(path.parent_dir().as_str()) }
+        if !known { return }
+        val dir = path.parent_dir()
+        self.komp.forget(dir.as_str())
+        if !path.ends_with("/kf.toml") { return }
+        self.publish(path, text, messages)
+        while fact in &self.komp.outdated(dir.as_str()) {
+            if fact.error.as_str().contains("not in the cache yet") {
+                self.queue(JobKind.Refresh, dir.as_str(), messages)
+                return
+            }
+        }
+    }
+
+    /// `textDocument/publishDiagnostics` for the kf.toml at `path`.
+    mutating fun publish(path: str, text: str, messages: &var List<String>): void {
+        val manifest = Manifest.parse(text)
+        val view = TextView.of(text, self.utf8)
+        messages.push(self.problems_of(path, &manifest).diagnostics_notification(path, &view))
+    }
+
+    mutating fun problems_of(path: str, manifest: &Manifest): List<Problem> {
+        if !path.ends_with("/kf.toml") { return List.new<Problem>() }
+        val dir = path.parent_dir()
+        val facts = self.komp.outdated(dir.as_str())
+        val cached = self.komp.cached_sources()
+        return manifest.problems(&facts, &cached, self.failure_in(dir.as_str()).as_str())
+    }
+
+    fun failure_in(dir: str): String {
+        while failure in &self.failures {
+            if failure.dir.as_str() == dir { return failure.message.clone() }
+        }
+        return String.from("")
     }
 }
 

@@ -1,0 +1,64 @@
+// A kf.toml's problems as the editor sees them: published diagnostics, and
+// the quick fixes that raise a requirement.
+
+import alloc.list.*
+import json.writer.*
+import komp_lsp.protocol.*
+
+/// `textDocument/publishDiagnostics` for the manifest at `path`.
+fun List<Problem>.diagnostics_notification(path: str, view: &TextView): String {
+    var writer = JsonWriter.object()
+    writer.field_string("uri", path.file_uri().as_str())
+    writer.key("diagnostics")
+    writer.begin_array()
+    while problem in &self { writer.write_raw(problem.diagnostic(view).as_str()) }
+    writer.end_array()
+    return notification("textDocument/publishDiagnostics", writer.finish().as_str())
+}
+
+/// `textDocument/codeAction`'s result: a fix for each problem on the lines
+/// `first_line` to `last_line` that raising a requirement repairs.
+fun List<Problem>.raise_actions(path: str, view: &TextView, first_line: uint64, last_line: uint64): String {
+    var writer = JsonWriter.new()
+    writer.begin_array()
+    while problem in &self {
+        if problem.raise_to.is_empty() { continue }
+        val line = view.position_of(problem.start).line
+        if line < first_line || line > last_line { continue }
+        writer.begin_object()
+        writer.field_string("title", "Require \"${problem.raise_to}\"".as_str())
+        writer.field_string("kind", "quickfix")
+        writer.field_bool("isPreferred", true)
+        writer.key("diagnostics")
+        writer.begin_array()
+        writer.write_raw(problem.diagnostic(view).as_str())
+        writer.end_array()
+        writer.key("edit")
+        writer.begin_object()
+        writer.key("changes")
+        writer.begin_object()
+        writer.key(path.file_uri().as_str())
+        writer.begin_array()
+        writer.begin_object()
+        writer.key("range")
+        writer.write_range(view, problem.raise_span.start, problem.raise_span.end)
+        writer.field_string("newText", problem.raise_to.as_str())
+        writer.end_object()
+        writer.end_array()
+        writer.end_object()
+        writer.end_object()
+        writer.end_object()
+    }
+    writer.end_array()
+    return writer.finish()
+}
+
+fun Problem.diagnostic(view: &TextView): String {
+    var writer = JsonWriter.object()
+    writer.key("range")
+    writer.write_range(view, self.start, self.end)
+    writer.field_int64("severity", self.severity)
+    writer.field_string("source", "komp")
+    writer.field_string("message", self.message.as_str())
+    return writer.finish()
+}

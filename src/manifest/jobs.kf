@@ -1,0 +1,107 @@
+// komp run in the background for kf.toml: refreshing a project's indexes,
+// and the Fetch and Update all lenses. What a finished job reports is
+// republished on the project's open manifests.
+
+import alloc.list.*
+import komp_lsp.komp.*
+import komp_lsp.protocol.*
+
+/// How often a running job is looked at.
+fun job_poll(): Duration {
+    return Duration.from_millis(100)
+}
+
+@derive(Clone)
+struct JobRequest {
+    val kind: JobKind
+    val dir: String
+}
+
+/// `workspace/executeCommand` for a lens: its job is queued, and the reply
+/// does not wait for it.
+pub mutating fun ManifestService.execute(body: str, messages: &var List<String>): void {
+    val command = body.string_at("params.command") ?: return
+    val arguments = body.strings_at("params.arguments")
+    if arguments.is_empty() { return }
+    if command.as_str() == "komp.fetch" { self.queue(JobKind.Fetch, arguments[0].as_str(), messages) }
+    if command.as_str() == "komp.update" { self.queue(JobKind.Update, arguments[0].as_str(), messages) }
+}
+
+/// How long until a running job is looked at again; `null` when none runs.
+pub fun ManifestService.wait_time(): Duration? {
+    return if self.jobs.is_empty() { null } else { Option.Some(job_poll()) }
+}
+
+/// The messages a finished job's report produces, once it has finished.
+pub mutating fun ManifestService.run_due_jobs(documents: &Documents): List<String> {
+    var messages = List.new<String>()
+    if self.jobs.is_empty() { return messages }
+    val finished = self.jobs[0].poll() ?: return messages
+    self.jobs = List.new<KompJob>()
+    self.finished(&finished, &var messages)
+    while path in &self.open.clone() {
+        if path.as_str().parent_dir().as_str() == finished.dir.as_str() {
+            self.publish(path.as_str(), documents.text_of(path.as_str()).as_str(), &var messages)
+        }
+    }
+    if self.inlay_refresh {
+        self.requests_sent = self.requests_sent + 1
+        messages.push(server_request("komp-lsp-${self.requests_sent}".as_str(), "workspace/inlayHint/refresh"))
+    }
+    self.start_next(&var messages)
+    return messages
+}
+
+/// Runs `kind` on `dir` once the jobs before it have finished; one already
+/// waiting is not queued twice.
+mutating fun ManifestService.queue(kind: JobKind, dir: str, messages: &var List<String>): void {
+    while request in &self.waiting {
+        if request.kind == kind && request.dir.as_str() == dir { return }
+    }
+    self.waiting.push(JobRequest { kind: kind, dir: String.from(dir) })
+    if self.jobs.is_empty() { self.start_next(messages) }
+}
+
+mutating fun ManifestService.start_next(messages: &var List<String>): void {
+    while !self.waiting.is_empty() {
+        val request = self.waiting.remove(0) ?: return
+        when (KompJob.start(self.komp_path.as_str(), request.kind, request.dir.as_str())) {
+            Some(job) => {
+                self.jobs.push(job)
+                return
+            }
+            None => messages.push(log_message(1, "cannot run ${self.komp_path}"))
+        }
+    }
+}
+
+/// What a job's report changes: fresh index facts, or a fetch or update
+/// that failed or no longer does.
+mutating fun ManifestService.finished(job: &FinishedJob, messages: &var List<String>): void {
+    val dir = job.dir.as_str()
+    val printed: str = job.output.as_str().trim()
+    if job.kind == JobKind.Refresh {
+        if job.success {
+            self.komp.learned_outdated(dir, printed)
+        } else {
+            messages.push(log_message(1, "`komp outdated ${dir}` failed: ${printed}"))
+        }
+        return
+    }
+    self.komp.forget(dir)
+    var failures = List.new<Failure>()
+    while failure in &self.failures {
+        if failure.dir.as_str() != dir { failures.push(failure.clone()) }
+    }
+    val verb = if job.kind == JobKind.Fetch { "fetching" } else { "updating" }
+    if job.success {
+        messages.push(show_message(3, "komp: ${verb} ${dir} done"))
+    } else {
+        val reason = if job.kind == JobKind.Fetch { printed.string_at("error") ?: String.from(printed) } else {
+            String.from(printed)
+        }
+        failures.push(Failure { dir: String.from(dir), message: "${verb} failed: ${reason}" })
+        messages.push(show_message(1, "komp: ${verb} ${dir} failed: ${reason}"))
+    }
+    self.failures = failures
+}

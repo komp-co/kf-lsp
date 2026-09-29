@@ -1,0 +1,78 @@
+// A komp command run in the background, for what may wait on the network:
+// the server polls it between messages instead of blocking on it.
+
+import alloc.list.*
+import std.process.*
+
+@derive(Copy, Equal)
+pub enum JobKind {
+    /// `komp outdated`, bringing the project's indexes up to date.
+    Refresh
+    /// `komp metadata`, fetching what the project needs as a build would.
+    Fetch
+    /// `komp update`, re-resolving and rewriting kf.lock.
+    Update
+}
+
+impl JobKind {
+    /// The words of the command, before the project directory.
+    fun words(): List<String> {
+        var words = List.new<String>()
+        when (self) {
+            Refresh => {
+                words.push(String.from("outdated"))
+                words.push(String.from("--format=json"))
+            }
+            Fetch => words.push(String.from("metadata"))
+            Update => words.push(String.from("update"))
+        }
+        return words
+    }
+}
+
+pub struct KompJob {
+    pub val kind: JobKind
+    /// The project directory it runs on.
+    pub val dir: String
+    var child: Child
+    var output: String
+}
+
+/// A job that has exited, and what it printed.
+pub struct FinishedJob {
+    pub val kind: JobKind
+    pub val dir: String
+    pub val success: bool
+    pub val output: String
+}
+
+impl KompJob {
+    /// `komp` started on the project in `dir`; `null` when it cannot be run.
+    pub static fun start(komp: str, kind: JobKind, dir: str): KompJob? {
+        var command = Command.new(komp)
+        while word in &kind.words() { command.arg(word.as_str()) }
+        command.arg(dir)
+        val spawned = command.spawn()
+        if spawned.is_err() { return null }
+        var child = spawned.unwrap()
+        child.stdin = Stream.closed()
+        return Option.Some(KompJob { kind: kind, dir: String.from(dir), child: child, output: String.from("") })
+    }
+
+    /// Takes what komp has printed so far; the finished job once it has
+    /// closed its output.
+    pub mutating fun poll(): FinishedJob? {
+        while true {
+            when (self.child.stdout.read_available(65536)) {
+                Data(text) => self.output.append(text.as_str())
+                Pending => return null
+                End => break
+                Failed(_error) => break
+            }
+        }
+        val status = self.child.wait()
+        return Option.Some(FinishedJob {
+            kind: self.kind, dir: self.dir.clone(), success: status.success(), output: self.output.clone()
+        })
+    }
+}

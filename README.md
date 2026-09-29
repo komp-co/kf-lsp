@@ -32,7 +32,9 @@ units otherwise.
 
 The manifests are answered from what komp reports, never by the compiler, and
 never waiting on the network: every question reads the package index as the
-cache has it, and is asked once per session.
+cache has it, and is asked once per session. What does reach the network runs
+as komp in the background, one job at a time, and what it reports is
+published when it finishes.
 
 - In `[dependencies]` and `[tools]`, completion offers the index's packages,
   and inside a requirement their versions, newest first, yanked ones left out
@@ -42,6 +44,16 @@ cache has it, and is asked once per session.
   holds, the newest its requirement allows and the newest in the index; an
   inlay hint after it says the same in a line (`komp outdated`).
 - `kflat` in `[project]` completes the installed toolchains (`komp toolchain list`).
+- A kf.toml's diagnostics name an unknown package or index, a requirement no
+  version meets, a dependency kf.lock does not hold or whose locked version is
+  not in the cache, and a newer release the requirement leaves out, with a
+  quick fix that raises it. A failed fetch or update is an error on the
+  package it names, until one succeeds.
+- Above `[dependencies]`, the lenses Fetch (`komp metadata`) and Update all
+  (`komp update`).
+- Opening a project's kf.toml brings its indexes up to date in the
+  background (`komp outdated`), and so does saving one that names an index
+  not in the cache yet.
 - In `lint.toml`, and the `[lint]` table of kf.toml, completion and hover give
   each lint's group, level, description and options, and levels complete in
   values (`komp lint --list`).
@@ -70,8 +82,8 @@ nothing behind. The server asks the komp that started it about the project
 | `protocol/` | the wire: framing, messages, replies, JSON paths, positions, URIs, open documents |
 | `compiler/` | `kflatc serve` as a child process, and the project `komp metadata` describes |
 | `source/` | `.kf` files: the compiler's answers as LSP results, and `SourceService`, which stages and checks |
-| `komp/` | `Komp`, which asks komp about packages, lints and toolchains, and reads its JSON |
-| `manifest/` | kf.toml and lint.toml: the scanner, and `ManifestService`, which answers from `Komp` |
+| `komp/` | `Komp`, which asks komp about packages, lints and toolchains and reads its JSON; `KompJob`, komp run in the background |
+| `manifest/` | kf.toml and lint.toml: the scanner, the problems komp's reports show, and `ManifestService`, which answers from `Komp` and runs the jobs |
 
 `Server`, at the top, keeps the lifecycle and the open documents, and hands
 each request to the service for its file.
@@ -100,7 +112,8 @@ hover before and after an edit, the definition, references and signature of
 a call, the hints, tokens, completions and renames of a later edit, and the
 quick fix for a misspelt method. `tests/manifests.py` builds a scratch package
 index and asks about a project's kf.toml and lint.toml: package, version and
-lint completion, hover, and the version hints.
+lint completion, hover, the version hints, the diagnostics and the quick fix
+that raises a requirement, the lenses, and a Fetch that fails.
 
 ## Neovim
 

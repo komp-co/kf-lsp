@@ -1,0 +1,97 @@
+// What is wrong with a kf.toml's index dependencies and tools, from what komp
+// reports about them: the rules, before they become diagnostics.
+
+import alloc.list.*
+import komp_lsp.komp.*
+
+/// LSP severities.
+pub fun error_severity(): int64 { return 1 }
+pub fun information_severity(): int64 { return 3 }
+pub fun hint_severity(): int64 { return 4 }
+
+@derive(Clone)
+pub struct Problem {
+    pub val severity: int64
+    pub val start: uint64
+    pub val end: uint64
+    pub val message: String
+    /// The requirement that fixes it, written over `raise_span`; "" for none.
+    pub val raise_to: String
+    pub val raise_span: Span
+}
+
+/// Every problem komp's reports show in the manifest: `facts` from
+/// `komp outdated`, `cached` the `name@version` sources in the cache, and
+/// `failure` why the last fetch or update failed, or "".
+pub fun Manifest.problems(facts: &List<OutdatedRow>, cached: &List<String>, failure: str): List<Problem> {
+    var out = List.new<Problem>()
+    while row in &self.rows {
+        while fact in &facts {
+            if fact.section.as_str() == row.table.as_str() && fact.name.as_str() == row.key.as_str() {
+                self.row_problems(row, fact, cached, &var out)
+            }
+        }
+    }
+    if !failure.is_empty() { out.push(self.failure_problem(failure)) }
+    return out
+}
+
+fun Manifest.row_problems(row: &ManifestRow, fact: &OutdatedRow, cached: &List<String>, out: &var List<Problem>): void {
+    val name = fact.name.as_str()
+    if !fact.error.is_empty() {
+        val severity = if fact.error.as_str().contains("not in the cache yet") {
+            information_severity()
+        } else {
+            error_severity()
+        }
+        out.push(problem(severity, row.key_start, row.key_end, fact.error.as_str()))
+        return
+    }
+    val span = self.requirement_span(row) ?: Span { start: row.value_start, end: row.value_end }
+    val raised = raised_requirement(fact.requirement.as_str(), fact.newest.as_str())
+    if fact.allowed.is_empty() {
+        var message = "no version of `${name}` matches \"${fact.requirement}\""
+        if !fact.newest.is_empty() { message.append("; the newest is ${fact.newest}".as_str()) }
+        out.push(raising(error_severity(), &span, message.as_str(), raised.as_str()))
+        return
+    }
+    if fact.section.as_str() == "dependencies" {
+        if fact.locked.is_empty() {
+            val message = "`${name}` is not fetched yet: kf.lock holds no version of it"
+            out.push(problem(information_severity(), row.key_start, row.key_end, message.as_str()))
+        } else if !cached.contains(&"${name}@${fact.locked}") {
+            val message = "`${name}` ${fact.locked} is locked but not in the cache"
+            out.push(problem(information_severity(), row.key_start, row.key_end, message.as_str()))
+        }
+    }
+    if !fact.newest.is_empty() && fact.newest.as_str() != fact.allowed.as_str() && !raised.is_empty() {
+        val message = "`${name}` ${fact.newest} is out; \"${fact.requirement}\" allows up to ${fact.allowed}"
+        out.push(raising(hint_severity(), &span, message.as_str(), raised.as_str()))
+    }
+}
+
+/// A failed fetch or update, on the row of the package it names in
+/// backquotes, else on the first line.
+fun Manifest.failure_problem(message: str): Problem {
+    while row in &self.rows {
+        val named = "`${row.key}`"
+        if row.table.as_str() == "dependencies" && message.contains(named.as_str()) {
+            return problem(error_severity(), row.key_start, row.key_end, message)
+        }
+    }
+    return problem(error_severity(), 0, line_end(self.text.as_str(), 0), message)
+}
+
+fun problem(severity: int64, start: uint64, end: uint64, message: str): Problem {
+    return Problem {
+        severity: severity, start: start, end: end, message: String.from(message), raise_to: String.from(""),
+        raise_span: Span { start: start, end: end }
+    }
+}
+
+fun raising(severity: int64, span: &Span, message: str, raise_to: str): Problem {
+    return Problem {
+        severity: severity, start: span.start, end: span.end, message: String.from(message),
+        raise_to: String.from(raise_to), raise_span: Span { start: span.start, end: span.end }
+    }
+}

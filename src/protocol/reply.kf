@@ -63,3 +63,20 @@ pub fun log_message(kind: int64, message: str): String {
     writer.field_string("message", "komp-lsp: ${message}")
     return notification("window/logMessage", writer.finish().as_str())
 }
+
+/// A message the editor shows the user; `kind` 1 is an error, 3 information.
+pub fun show_message(kind: int64, message: str): String {
+    var writer = JsonWriter.object()
+    writer.field_int64("type", kind)
+    writer.field_string("message", message)
+    return notification("window/showMessage", writer.finish().as_str())
+}
+
+/// A request from the server to the client, whose answer it does not need.
+pub fun server_request(id: str, method: str): String {
+    var writer = JsonWriter.object()
+    writer.field_string("jsonrpc", "2.0")
+    writer.field_string("id", id)
+    writer.field_string("method", method)
+    return writer.finish()
+}
