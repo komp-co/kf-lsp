@@ -191,7 +191,24 @@ impl Project {
         return writer.finish()
     }
 
-    /// `kflatc serve`'s `check` params for `entry`.
+    /// The members that are in `names` or load one of them, in the
+    /// project's order, which puts dependencies first.
+    pub fun with_dependents(names: &List<String>): List<String> {
+        var out = List.new<String>()
+        while entry in &self.crates {
+            if !entry.member { continue }
+            var wanted = names.contains(&entry.name)
+            while load in &entry.loads {
+                if names.contains(load) { wanted = true }
+            }
+            if wanted { out.push(entry.name.clone()) }
+        }
+        return out
+    }
+
+    /// `kflatc serve`'s `check` params for `entry`. Its workspace
+    /// dependencies go in `sources`, so their unsaved text is what it is
+    /// checked against; a kflatc that predates `sources` passes them over.
     pub fun check_params(entry: &CrateEntry): String {
         var writer = JsonWriter.object()
         writer.field_string("target_dir", self.target_dir.as_str())
@@ -212,6 +229,21 @@ impl Project {
         while row in &entry.lint_options { writer.write_option_row(row.as_str()) }
         writer.end_array()
         writer.end_object()
+        writer.key("sources")
+        writer.begin_array()
+        while name in &entry.loads {
+            val loaded = self.crate_named(name.as_str()) ?: continue
+            if !loaded.member { continue }
+            writer.begin_object()
+            writer.field_string("name", loaded.name.as_str())
+            writer.field_string("root", loaded.root.as_str())
+            writer.key("loads")
+            writer.begin_array()
+            while load in &loaded.loads { writer.write_string(load.as_str()) }
+            writer.end_array()
+            writer.end_object()
+        }
+        writer.end_array()
         return writer.finish()
     }
 }
