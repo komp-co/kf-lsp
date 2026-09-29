@@ -114,6 +114,7 @@ komp build .        # target/kflat/komp_lsp
 komp test .
 python3 tests/session.py target/kflat/komp_lsp
 python3 tests/manifests.py target/kflat/komp_lsp
+python3 tests/workspace.py target/kflat/komp_lsp
 ```
 
 `tests/session.py` drives one editor session end to end: an error published
@@ -125,6 +126,9 @@ quick fix for a misspelt method. `tests/manifests.py` builds a scratch package
 index and asks about a project's kf.toml and lint.toml: package, version and
 lint completion, hover, the version hints, the diagnostics and the quick fix
 that raises a requirement, the lenses, and a Fetch that fails.
+`tests/workspace.py` renames a library function in a two-crate workspace and
+saves, and checks that the call in the other crate is reported, then cleared
+once it is renamed back.
 
 ## Neovim
 
@@ -145,7 +149,9 @@ For highlighting, point a TextMate-compatible plugin at the grammar in
 
 ## Limits for now
 
-- Only the crate holding the edited file is checked. A crate that depends on
-  it sees its interface as of the last `komp check` or save.
+- A crate that depends on the edited one is checked again once the edit is
+  saved: `komp check` writes the saved crate's interface in the background,
+  and the workspace crates that load it are checked when it changed. Until
+  the save, they see the interface as it was.
 - Memory grows with each check: the compiler does not yet free a check's
   state. Restarting the server clears it.

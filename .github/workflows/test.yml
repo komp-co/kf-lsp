@@ -59,3 +59,6 @@ jobs:
 
       - name: kf.toml and lint.toml in an editor session
         run: python3 tests/manifests.py target/kflat/komp_lsp
+
+      - name: A two-crate workspace in an editor session
+        run: python3 tests/workspace.py target/kflat/komp_lsp

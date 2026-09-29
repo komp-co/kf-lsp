@@ -37,6 +37,12 @@ pub struct SourceService {
     var format_failed: bool
     /// The client runs the Run and Test lenses' commands.
     var run_lenses: bool
+    /// `komp check` writing the interfaces after a save, while it runs.
+    var rebuild: List<KompJob>
+    /// The crates saved since the last rebuild started.
+    var saved_crates: List<SavedCrate>
+    /// A save came in during the rebuild, which runs again once it ends.
+    var rebuild_again: bool
 }
 
 /// Open documents' text, else what is on disk: what positions in the files
@@ -58,7 +64,8 @@ impl SourceService {
             komp: String.from(komp), root: String.from(""), utf8: false, project: null,
             compiler: List.new<Compiler>(), dirty: List.new<String>(), edited_at: null,
             published: List.new<String>(), fixes: List.new<Fix>(), known_manifests: List.new<KnownManifest>(),
-            format_failed: false, run_lenses: false
+            format_failed: false, run_lenses: false, rebuild: List.new<KompJob>(),
+            saved_crates: List.new<SavedCrate>(), rebuild_again: false
         }
     }
 
@@ -91,8 +98,19 @@ impl SourceService {
         self.edited_at = Option.Some(Instant.now())
     }
 
-    /// How long until a check is due; `null` when none is waiting.
+    /// How long until a check is due or a rebuild is looked at; `null` when
+    /// neither is waiting.
     pub fun wait_time(): Duration? {
+        val check = self.check_wait()
+        val rebuild = self.rebuild_wait()
+        if check.is_none() { return rebuild }
+        if rebuild.is_none() { return check }
+        val check_nanos = check?.as_nanos() ?: 0
+        return if check_nanos < rebuild_poll().as_nanos() { check } else { rebuild }
+    }
+
+    /// How long until a check is due; `null` when none is waiting.
+    fun check_wait(): Duration? {
         if self.dirty.is_empty() { return null }
         val since = self.edited_at?.elapsed() ?: return Option.Some(Duration.zero())
         if since.as_nanos() >= debounce().as_nanos() { return Option.Some(Duration.zero()) }
@@ -102,7 +120,7 @@ impl SourceService {
     /// Checks every dirty crate once its debounce has passed: the messages
     /// that publish what the checks found.
     pub mutating fun run_due_checks(documents: &Documents): List<String> {
-        var messages = List.new<String>()
+        var messages = self.run_due_rebuild(documents)
         if !self.check_is_due() { return messages }
         val names = self.dirty.clone()
         self.dirty = List.new<String>()
@@ -117,7 +135,7 @@ impl SourceService {
     }
 
     fun check_is_due(): bool {
-        val wait = self.wait_time()
+        val wait = self.check_wait()
         return wait.is_some() && (wait?.as_nanos() ?: 1) == 0
     }
 

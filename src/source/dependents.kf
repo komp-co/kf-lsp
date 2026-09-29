@@ -1,0 +1,95 @@
+// A saved source file can change the interface its crate's dependents are
+// checked against, which `kflatc serve` reads from the target directory:
+// komp writes the interfaces again in the background, and the workspace
+// crates that load one that changed are checked against it.
+
+import alloc.list.*
+import komp_lsp.komp.*
+import komp_lsp.protocol.*
+
+/// A saved crate, and its interface as it was before the rebuild.
+@derive(Clone)
+struct SavedCrate {
+    val name: String
+    val interface: String
+}
+
+/// How often a running rebuild is looked at.
+fun rebuild_poll(): Duration {
+    return Duration.from_millis(100)
+}
+
+/// A source file was saved: its crate's interface is written again, after
+/// the rebuild already running if there is one.
+pub mutating fun SourceService.saved(path: str): void {
+    val project = self.project?.clone() ?: return
+    val entry = project.crate_for(path) ?: return
+    if !entry.member { return }
+    var known = false
+    while saved in &self.saved_crates {
+        if saved.name.as_str() == entry.name.as_str() { known = true }
+    }
+    if !known {
+        val before = disk_text(self.interface_path(entry.name.as_str()).as_str())
+        self.saved_crates.push(SavedCrate { name: entry.name.clone(), interface: before })
+    }
+    if self.rebuild.is_empty() { self.start_rebuild() } else { self.rebuild_again = true }
+}
+
+/// How long until a running rebuild is looked at again; `null` when none
+/// runs.
+fun SourceService.rebuild_wait(): Duration? {
+    return if self.rebuild.is_empty() { null } else { Option.Some(rebuild_poll()) }
+}
+
+/// Once a rebuild has finished: the messages that publish what checking
+/// the dependents of each changed interface found.
+mutating fun SourceService.run_due_rebuild(documents: &Documents): List<String> {
+    var messages = List.new<String>()
+    if self.rebuild.is_empty() { return messages }
+    // A failed `komp check` is expected when a dependent no longer compiles;
+    // the interfaces it could write are written all the same.
+    val _finished = self.rebuild[0].poll() ?: return messages
+    self.rebuild = List.new<KompJob>()
+    if self.rebuild_again {
+        self.rebuild_again = false
+        self.start_rebuild()
+        return messages
+    }
+    val saved = self.saved_crates.clone()
+    self.saved_crates = List.new<SavedCrate>()
+    var changed = List.new<String>()
+    while crate in &saved {
+        val now = disk_text(self.interface_path(crate.name.as_str()).as_str())
+        if now.as_str() != crate.interface.as_str() { changed.push(crate.name.clone()) }
+    }
+    if changed.is_empty() { return messages }
+    val project = self.project?.clone() ?: return messages
+    while entry in &project.crates {
+        if !entry.member || changed.contains(&entry.name) { continue }
+        var loads_changed = false
+        while load in &entry.loads {
+            if changed.contains(load) { loads_changed = true }
+        }
+        if !loads_changed { continue }
+        val answer = self.ask_compiler("check", project.check_params(entry).as_str(), &var messages)
+        val text = answer ?: continue
+        self.publish_answer(entry, &Answer.of(text.as_str()), documents, &var messages)
+    }
+    return messages
+}
+
+mutating fun SourceService.start_rebuild(): void {
+    when (KompJob.start(self.komp.as_str(), JobKind.Check, self.root.as_str())) {
+        Some(job) => self.rebuild.push(job)
+        None => self.saved_crates = List.new<SavedCrate>()
+    }
+}
+
+/// Where the crate's interface is written.
+fun SourceService.interface_path(name: str): String {
+    return when (&self.project) {
+        Some(project) => "${project.target_dir}/${name}.kfi"
+        None => String.from("")
+    }
+}

@@ -156,6 +156,7 @@ impl Server {
             "textDocument/didSave" => {
                 val uri = body.string_at("params.textDocument.uri") ?: return
                 val path = uri.as_str().file_path() ?: return
+                if path.as_str().ends_with(".kf") { self.source.saved(path.as_str()) }
                 self.manifest_changed(path.as_str(), messages)
             }
             "textDocument/didClose" => {
