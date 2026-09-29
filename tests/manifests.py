@@ -68,6 +68,8 @@ def main():
         child.stdin.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
         child.stdin.flush()
 
+    seen = []
+
     def receive():
         length = None
         while True:
@@ -79,7 +81,9 @@ def main():
                 break
             if line.lower().startswith(b"content-length:"):
                 length = int(line.split(b":")[1])
-        return json.loads(child.stdout.read(length))
+        message = json.loads(child.stdout.read(length))
+        seen.append(message)
+        return message
 
     next_id = [100]
 
@@ -111,7 +115,8 @@ def main():
     def at(uri, line, character):
         return {"textDocument": {"uri": uri}, "position": {"line": line, "character": character}}
 
-    watching = {"workspace": {"didChangeWatchedFiles": {"dynamicRegistration": True}}}
+    watching = {"workspace": {"didChangeWatchedFiles": {"dynamicRegistration": True},
+                              "inlayHint": {"refreshSupport": True}}}
     ask("initialize", {"rootUri": "file://" + project, "capabilities": watching})
     send({"method": "initialized", "params": {}})
     registration = receive()
@@ -156,6 +161,12 @@ def main():
     expect("hover on a lint gives its level and options",
            hover is not None and "deny here" in hover["contents"]["value"]
            and "max_columns" in hover["contents"]["value"])
+
+    while not any(m.get("method") == "workspace/inlayHint/refresh" for m in seen):
+        receive()
+    logs = [m["params"]["message"] for m in seen if m.get("method") == "window/logMessage"]
+    expect("opening the manifest refreshes its indexes in the background",
+           not any("komp outdated" in line for line in logs))
 
     open_document(manifest_uri, manifest, 5)
     diagnostics = next_diagnostics(manifest_uri)
