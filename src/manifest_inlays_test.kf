@@ -1,0 +1,40 @@
+import alloc.list.*
+import core.assert.assert_eq
+
+fun outdated_fact(locked: str, allowed: str, newest: str, error: str): List<OutdatedRow> {
+    var out = List.new<OutdatedRow>()
+    out.push(OutdatedRow {
+        section: String.from("dependencies"), name: String.from("json"), requirement: String.from("0.1"),
+        index: String.from("i"), locked: String.from(locked), allowed: String.from(allowed),
+        newest: String.from(newest), error: String.from(error)
+    })
+    return out
+}
+
+fun json_row(): ManifestRow {
+    return manifest_rows("[dependencies]\njson = \"0.1\"\n")[0].clone()
+}
+
+@test
+fun a_locked_row_shows_the_newer_release(): void {
+    val label = version_label(&outdated_fact("0.1.0", "0.1.0", "0.2.0", ""), &json_row())
+    assert_eq(label.as_str(), "locked 0.1.0, 0.2.0 available", "locked, and what is newer")
+}
+
+@test
+fun an_unlocked_row_shows_what_it_resolves_to(): void {
+    val label = version_label(&outdated_fact("", "0.1.0", "0.1.0", ""), &json_row())
+    assert_eq(label.as_str(), "resolves to 0.1.0", "nothing newer")
+}
+
+@test
+fun a_row_komp_could_not_answer_has_no_hint(): void {
+    val label = version_label(&outdated_fact("", "", "", "not in the cache yet"), &json_row())
+    assert_eq(label.is_empty(), true, "the error is not a hint")
+}
+
+@test
+fun a_row_in_another_table_has_no_hint(): void {
+    val row = manifest_rows("[tools]\njson = \"0.1\"\n")[0].clone()
+    assert_eq(version_label(&outdated_fact("0.1.0", "0.1.0", "0.1.0", ""), &row).is_empty(), true, "tools differ")
+}

@@ -1,0 +1,46 @@
+// Inlay hints in kf.toml: after each index package and tool, the version
+// kf.lock holds and the newest the index offers.
+
+import alloc.list.*
+import json.writer.*
+
+/// `textDocument/inlayHint`'s result for the rows on lines `first_line` to
+/// `last_line`.
+mutating fun Server.manifest_inlays(path: str, text: str, first_line: uint64, last_line: uint64): String {
+    var writer = JsonWriter.new()
+    writer.begin_array()
+    if path.ends_with("/kf.toml") {
+        val facts = self.manifests.outdated(self.komp.as_str(), parent_dir(path).as_str())
+        var walker = PositionWalker.new()
+        while row in &manifest_rows(text) {
+            val label = version_label(&facts, &row)
+            if label.is_empty() { continue }
+            val at = walker.advance_to(text, row.value_end, self.utf8)
+            if at.line < first_line || at.line > last_line { continue }
+            writer.begin_object()
+            writer.key("position")
+            writer.write_position(&at)
+            writer.field_string("label", label.as_str())
+            writer.field_bool("paddingLeft", true)
+            writer.end_object()
+        }
+    }
+    writer.end_array()
+    return writer.finish()
+}
+
+/// "locked 0.1.0, 0.2.0 available", or "" for a row komp reports nothing on.
+fun version_label(facts: &List<OutdatedRow>, row: &ManifestRow): String {
+    while fact in &facts {
+        if fact.section.as_str() != row.table.as_str() || fact.name.as_str() != row.key.as_str() { continue }
+        if !fact.error.is_empty() { return String.from("") }
+        val current = if fact.locked.is_empty() { fact.allowed.clone() } else { fact.locked.clone() }
+        var label = if fact.locked.is_empty() { "resolves to ${current}" } else { "locked ${current}" }
+        if current.is_empty() { label = String.from("no version fits") }
+        if !fact.newest.is_empty() && fact.newest.as_str() != current.as_str() {
+            label.append(", ${fact.newest} available".as_str())
+        }
+        return label
+    }
+    return String.from("")
+}
