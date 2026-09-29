@@ -148,7 +148,7 @@ fun parse_cached(text: str): List<String> {
 }
 
 /// The running komp's version, then each installed toolchain's, from
-/// `komp self list --format=json`.
+/// `komp toolchain list --format=json`.
 fun parse_toolchains(text: str): List<String> {
     var out = List.new<String>()
     val running = text.string_at("running") ?: ""
