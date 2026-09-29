@@ -1,0 +1,67 @@
+// Quick fixes: the repairs a check's diagnostics carry, kept until the next
+// check so that a code-action request, which a client sends on every cursor
+// move, is answered without checking again.
+
+import alloc.list.*
+import json.writer.*
+import komp_lsp.protocol.*
+
+/// One repair, as the code action that applies it, and the lines of the
+/// diagnostic it repairs.
+@derive(Clone)
+pub struct Fix {
+    pub val path: String
+    val first_line: uint64
+    val last_line: uint64
+    val action: String
+}
+
+/// The fix for what was reported, whose LSP diagnostic is `diagnostic`.
+/// `view` is the diagnostic's file and `repaired` the repair's, which differ
+/// when the repair lands elsewhere.
+fun Reported.fix(diagnostic: str, view: &TextView, repaired: &TextView): Fix {
+    val repair = &self.repair
+    var writer = JsonWriter.object()
+    writer.field_string("title", repair.title.as_str())
+    writer.field_string("kind", "quickfix")
+    writer.key("diagnostics")
+    writer.begin_array()
+    writer.write_raw(diagnostic)
+    writer.end_array()
+    writer.key("edit")
+    writer.begin_object()
+    writer.key("changes")
+    writer.begin_object()
+    writer.key(repair.file.as_str().file_uri().as_str())
+    writer.begin_array()
+    writer.begin_object()
+    writer.key("range")
+    writer.write_range(repaired, repair.byte_start, repair.byte_end)
+    writer.field_string("newText", repair.replacement.as_str())
+    writer.end_object()
+    writer.end_array()
+    writer.end_object()
+    writer.end_object()
+    return Fix {
+        path: self.file.clone(), first_line: view.position_of(self.byte_start).line,
+        last_line: view.position_of(self.byte_end).line, action: writer.finish()
+    }
+}
+
+/// `textDocument/codeAction`'s result: the fixes in `path` whose diagnostic
+/// is on the lines `first_line` to `last_line`. Lines rather than columns,
+/// because a client asks with an empty range at the cursor, and a fix is
+/// meant for the line the cursor is on. It is offered where the problem is,
+/// which is not always where the repair goes: an added import lands at the
+/// top of the file.
+pub fun List<Fix>.code_actions(path: str, first_line: uint64, last_line: uint64): String {
+    var writer = JsonWriter.new()
+    writer.begin_array()
+    while fix in &self {
+        if fix.path.as_str() != path { continue }
+        if fix.last_line < first_line || fix.first_line > last_line { continue }
+        writer.write_raw(fix.action.as_str())
+    }
+    writer.end_array()
+    return writer.finish()
+}

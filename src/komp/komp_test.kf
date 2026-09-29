@@ -1,0 +1,17 @@
+import core.assert.assert_eq
+
+@test
+fun a_question_komp_cannot_answer_is_remembered(): void {
+    var komp = Komp.new("/nonexistent/komp")
+    val _catalog = komp.catalog()
+    val _again = komp.catalog()
+    assert_eq(komp.unanswered.size(), 1, "asked once, not on every request")
+}
+
+@test
+fun a_save_asks_again(): void {
+    var komp = Komp.new("/nonexistent/komp")
+    val _catalog = komp.catalog()
+    komp.forget("/p")
+    assert_eq(komp.unanswered.is_empty(), true, "the next request runs komp again")
+}

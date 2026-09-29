@@ -1,0 +1,124 @@
+// What the server answers about a source file: each request put to the
+// compiler as its question, and the answer turned into LSP's result.
+
+import alloc.list.*
+import json.quote.*
+import json.reader.*
+import json.writer.*
+import komp_lsp.protocol.*
+
+impl SourceService {
+    /// The result of `method` about the file at `path`; `empty` when the
+    /// compiler cannot answer. A rename the compiler refuses is an error
+    /// reply, so the whole reply to request `id` is returned.
+    pub mutating fun request(id: str, method: str, body: str, path: str, empty: str, documents: &Documents,
+                             messages: &var List<String>): String {
+        if method == "textDocument/codeAction" {
+            val first = body.int_at("params.range.start.line") ?: 0
+            val last = body.int_at("params.range.end.line") ?: first
+            return id.result_reply(self.fixes.code_actions(path, first as uint64, last as uint64).as_str())
+        }
+        if !self.ensure_compiler(messages) { return id.result_reply(empty) }
+        val view = documents.view_of(path, self.utf8)
+        val files = OpenFiles { documents: documents.clone(), utf8: self.utf8 }
+        if method == "textDocument/rename" { return self.rename(id, body, path, &view, &files, messages) }
+        val result = when method {
+            "textDocument/documentSymbol" => self.ask_about("symbols", path, messages).symbols(&view)
+            "textDocument/foldingRange" => self.ask_about("folding", path, messages).folding(&view)
+            "textDocument/selectionRange" => self.selection_ranges(body, path, &view, messages)
+            "textDocument/hover" => self.ask_at("hover", body, path, &view, messages).hover(&view)
+            "textDocument/definition" => self.ask_at("references", body, path, &view, messages).definition(&files)
+            "textDocument/references" => {
+                val with_declaration = body.bool_at("params.context.includeDeclaration") ?: false
+                self.ask_at("references", body, path, &view, messages).references(with_declaration, &files)
+            }
+            "textDocument/signatureHelp" => self.ask_at("signature", body, path, &view, messages).signature_help()
+            "textDocument/completion" => self.ask_at("completion", body, path, &view, messages).completion()
+            "textDocument/inlayHint" => {
+                val first = body.int_at("params.range.start.line") ?: 0
+                val last = body.int_at("params.range.end.line") ?: 9223372036854775807
+                self.ask_typed("inlays", path, -1, "", messages).inlay_hints(&view, first as uint64, last as uint64)
+            }
+            "textDocument/semanticTokens/full" => {
+                self.ask_typed("tokens", path, -1, "", messages).semantic_tokens(&view)
+            }
+            _ => self.ask_at("rename", body, path, &view, messages).prepare_rename(&view)
+        }
+        return id.result_reply(result.as_str())
+    }
+
+    /// A rename's edits, or the compiler's reason for refusing it.
+    mutating fun rename(id: str, body: str, path: str, view: &TextView, files: &OpenFiles,
+                        messages: &var List<String>): String {
+        val new_name = body.string_at("params.newName") ?: ""
+        val offset = view.request_offset(body)
+        val answer = self.ask_typed("rename", path, offset as int64, new_name.as_str(), messages)
+        val refusal = answer.rename_refusal()
+        if refusal.is_some() { return id.error_reply(ErrorCode.RequestFailed, (refusal ?: "").as_str()) }
+        return id.result_reply(answer.rename(new_name.as_str(), files).as_str())
+    }
+
+    /// The compiler's answer to an untyped `question` about `path`.
+    mutating fun ask_about(question: str, path: str, messages: &var List<String>): Answer {
+        val params = "{\"path\":${path.json_quoted()}}"
+        return Answer.of((self.ask_compiler(question, params.as_str(), messages) ?: "").as_str())
+    }
+
+    /// The compiler's answer to a typed `question` about the position the
+    /// request names.
+    mutating fun ask_at(question: str, body: str, path: str, view: &TextView, messages: &var List<String>): Answer {
+        return self.ask_typed(question, path, view.request_offset(body) as int64, "", messages)
+    }
+
+    /// The compiler's answer to a typed `question` about `path`: at `offset`
+    /// unless it is negative, and naming `new_name` unless it is empty.
+    mutating fun ask_typed(question: str, path: str, offset: int64, new_name: str,
+                           messages: &var List<String>): Answer {
+        val project = self.project?.clone() ?: return Answer.of("")
+        val entry = project.crate_for(path) ?: return Answer.of("")
+        var writer = JsonWriter.object()
+        writer.field_string("path", path)
+        if offset >= 0 { writer.field_int64("offset", offset) }
+        if !new_name.is_empty() { writer.field_string("new_name", new_name) }
+        writer.field_raw("crates", project.typed_crates(&entry).as_str())
+        return Answer.of((self.ask_compiler(question, writer.finish().as_str(), messages) ?: "").as_str())
+    }
+
+    /// One chain per requested position, in the order they came.
+    mutating fun selection_ranges(body: str, path: str, view: &TextView, messages: &var List<String>): String {
+        val positions = positions_at(body)
+        var writer = JsonWriter.new()
+        writer.begin_array()
+        while at in &positions {
+            val offset = view.offset_of(at.line, at.character)
+            val params = "{\"path\":${path.json_quoted()},\"offset\":${offset}}"
+            val answer = Answer.of((self.ask_compiler("selection", params.as_str(), messages) ?: "").as_str())
+            writer.write_raw(answer.selection(view, offset).as_str())
+        }
+        writer.end_array()
+        return writer.finish()
+    }
+}
+
+/// Every `params.positions` entry.
+fun positions_at(body: str): List<Position> {
+    var out = List.new<Position>()
+    var reader = body.value_at("params.positions") ?: return out
+    if !reader.begin_array() { return out }
+    while reader.array_has_next() {
+        var line: uint64 = 0
+        var character: uint64 = 0
+        if reader.begin_object() {
+            while reader.object_has_next() {
+                val key = reader.read_key()
+                when key.as_str() {
+                    "line" => line = reader.read_uint64()
+                    "character" => character = reader.read_uint64()
+                    _ => reader.skip_value()
+                }
+            }
+        }
+        out.push(Position { line: line, character: character })
+    }
+    return out
+}

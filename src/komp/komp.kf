@@ -1,0 +1,163 @@
+// Asking komp about packages, lints and toolchains. Each question runs komp
+// once per session: an answer is kept, and so is a question komp could not
+// answer, which a missing tool or an unfetched index would make fail on
+// every keystroke otherwise. The index is always read as the cache has it,
+// so no question waits on the network.
+
+import alloc.list.*
+import alloc.path.Path
+import std.fs.TempDir
+import std.fs.read_to_string
+import std.process.Command
+
+@derive(Clone)
+struct VersionsOf {
+    val key: String
+    val versions: List<PackageVersion>
+}
+
+@derive(Clone)
+struct OutdatedOf {
+    val dir: String
+    val rows: List<OutdatedRow>
+}
+
+@derive(Clone)
+struct LintsOf {
+    val dir: String
+    val facts: LintFacts
+}
+
+pub struct Komp {
+    /// The command that runs komp.
+    val path: String
+    var catalog: List<CatalogPackage>
+    var versions: List<VersionsOf>
+    var outdated: List<OutdatedOf>
+    var lints: List<LintsOf>
+    /// The questions komp could not answer, until `forget` is called.
+    var unanswered: List<String>
+}
+
+impl Komp {
+    pub static fun new(path: str): Komp {
+        return Komp {
+            path: String.from(path), catalog: List.new<CatalogPackage>(), versions: List.new<VersionsOf>(),
+            outdated: List.new<OutdatedOf>(), lints: List.new<LintsOf>(), unanswered: List.new<String>()
+        }
+    }
+
+    /// Every package in the default index.
+    pub mutating fun catalog(): List<CatalogPackage> {
+        if self.catalog.is_empty() {
+            val answer = self.ask("search --offline --format=json", "") ?: return List.new<CatalogPackage>()
+            self.catalog = CatalogPackage.parse_list(answer.as_str())
+        }
+        return self.catalog.clone()
+    }
+
+    /// A package of the catalog, once `catalog()` has read it.
+    pub fun catalog_entry(name: str): CatalogPackage? {
+        while package in &self.catalog {
+            if package.name.as_str() == name { return Option.Some(package.clone()) }
+        }
+        return null
+    }
+
+    /// `name`'s versions in the index at `index`, or the default one for "".
+    pub mutating fun versions(name: str, index: str): List<PackageVersion> {
+        val key = "${index} ${name}"
+        while known in &self.versions {
+            if known.key.as_str() == key.as_str() { return known.versions.clone() }
+        }
+        val question = if index.is_empty() { String.from("info --offline --format=json") } else {
+            "info --offline --format=json --index ${index}"
+        }
+        val answer = self.ask(question.as_str(), name) ?: return List.new<PackageVersion>()
+        val found = PackageVersion.parse_list(answer.as_str())
+        self.versions.push(VersionsOf { key: key, versions: found.clone() })
+        return found
+    }
+
+    /// `komp outdated` for the project in `dir`.
+    pub mutating fun outdated(dir: str): List<OutdatedRow> {
+        while known in &self.outdated {
+            if known.dir.as_str() == dir { return known.rows.clone() }
+        }
+        val answer = self.ask("outdated --offline --format=json", dir) ?: return List.new<OutdatedRow>()
+        val rows = OutdatedRow.parse_list(answer.as_str())
+        self.outdated.push(OutdatedOf { dir: String.from(dir), rows: rows.clone() })
+        return rows
+    }
+
+    /// Every lint and group, with the levels in force in `dir`.
+    pub mutating fun lints(dir: str): LintFacts {
+        while known in &self.lints {
+            if known.dir.as_str() == dir { return known.facts.clone() }
+        }
+        val empty = LintFacts { groups: List.new<String>(), lints: List.new<LintFact>() }
+        val answer = self.ask("lint --list --format=json", dir) ?: return empty
+        val facts = LintFacts.parse(answer.as_str())
+        self.lints.push(LintsOf { dir: String.from(dir), facts: facts.clone() })
+        return facts
+    }
+
+    /// `name@version` for every source in the cache, which fetching changes,
+    /// so it is asked each time.
+    pub fun cached_sources(): List<String> {
+        val answer = self.run("cache list --format=json", "") ?: return List.new<String>()
+        return parse_cached(answer.as_str())
+    }
+
+    /// The running komp's version and every installed toolchain's.
+    pub fun toolchains(): List<String> {
+        val answer = self.run("self list --format=json", "") ?: return List.new<String>()
+        return parse_toolchains(answer.as_str())
+    }
+
+    /// Drops what was learned about the project in `dir`, whose manifest,
+    /// lock or lint.toml changed, and asks every unanswered question again.
+    pub mutating fun forget(dir: str): void {
+        var outdated = List.new<OutdatedOf>()
+        while known in &self.outdated {
+            if known.dir.as_str() != dir { outdated.push(known.clone()) }
+        }
+        self.outdated = outdated
+        var lints = List.new<LintsOf>()
+        while known in &self.lints {
+            if known.dir.as_str() != dir { lints.push(known.clone()) }
+        }
+        self.lints = lints
+        self.unanswered = List.new<String>()
+    }
+
+    /// `run`, remembering a question that fails so it is not asked again.
+    mutating fun ask(question: str, operand: str): String? {
+        val key = "${question} ${operand}"
+        if self.unanswered.contains(&key) { return null }
+        val answer = self.run(question, operand)
+        if answer.is_none() { self.unanswered.push(key) }
+        return answer
+    }
+
+    /// What `komp <question> <operand>` printed, trimmed; `null` when it
+    /// exited non-zero or printed nothing. The question is words separated by
+    /// single spaces; the operand, a path that may hold spaces, is one
+    /// argument, and none when "".
+    fun run(question: str, operand: str): String? {
+        val scratch = TempDir.new("komp-lsp")
+        val output = "${scratch.path().as_str()}/answer"
+        var command = Command.new(self.path.as_str())
+        while word in &question.split(" ") { command.arg(word.as_str()) }
+        if !operand.is_empty() { command.arg(operand) }
+        command.stdout_to(Path.new(output.as_str()))
+        if !command.status().success() { return null }
+        val text = when (read_to_string(output.as_str())) {
+            Ok(read) => read.clone()
+            Err(_error) => String.from("")
+        }
+        val trimmed: str = text.as_str().trim()
+        if trimmed.is_empty() { return null }
+        return Option.Some(String.from(trimmed))
+    }
+}

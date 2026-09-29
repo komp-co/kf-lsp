@@ -1,0 +1,68 @@
+import core.assert.assert_eq
+
+fun manifest_sample(): String {
+    return String.from("""[project]
+name = "app" # the name
+
+[dependencies]
+json = "0.1"
+yaml = { version = "0.3", index = "work" }
+""")
+}
+
+@test
+fun a_row_knows_its_table(): void {
+    val rows = Manifest.parse(manifest_sample().as_str()).rows
+    assert_eq(rows[1].table.as_str(), "dependencies", "json sits under [dependencies]")
+}
+
+@test
+fun a_row_value_leaves_its_comment_out(): void {
+    val text = manifest_sample()
+    val rows = Manifest.parse(text.as_str()).rows
+    assert_eq(text.substring(rows[0].value_start, rows[0].value_end).as_str(), "\"app\"", "the quoted name")
+}
+
+@test
+fun every_row_is_found(): void {
+    assert_eq(Manifest.parse(manifest_sample().as_str()).rows.size(), 3, "name, json and yaml")
+}
+
+@test
+fun an_inline_table_gives_up_a_member(): void {
+    assert_eq("{ version = \"0.3\", index = \"work\" }".inline_value("index").as_str(), "work", "the index name")
+}
+
+@test
+fun a_cursor_on_a_new_line_writes_a_key(): void {
+    val text = "[dependencies]\njs"
+    val at = Manifest.parse(text).spot_at(text.byte_len())
+    assert_eq(at.kind == SpotKind.Key && at.start == 15, true, "the key starts the line")
+}
+
+@test
+fun a_cursor_in_quotes_writes_the_value(): void {
+    val text = "[dependencies]\njson = \"0."
+    val at = Manifest.parse(text).spot_at(text.byte_len())
+    assert_eq("${at.key}|${at.quoted}|${text.byte_len() - at.start}".as_str(), "json|true|2", "after the quote")
+}
+
+@test
+fun a_cursor_in_an_inline_table_names_its_member(): void {
+    val text = "[tools]\nkomp_fmt = { version = \""
+    val at = Manifest.parse(text).spot_at(text.byte_len())
+    assert_eq("${at.key}.${at.inner_key}".as_str(), "komp_fmt.version", "the version inside the table")
+}
+
+@test
+fun a_cursor_after_a_comma_writes_an_inner_key(): void {
+    val text = "[lints]\nlong_line = { level = \"deny\", ma"
+    val at = Manifest.parse(text).spot_at(text.byte_len())
+    assert_eq(at.in_braces && at.inner_key.is_empty(), true, "a key of long_line's table")
+}
+
+@test
+fun a_cursor_after_a_bracket_writes_a_table(): void {
+    val text = "[project]\n[dep"
+    assert_eq(Manifest.parse(text).spot_at(text.byte_len()).kind == SpotKind.Table, true, "a table name")
+}

@@ -1,0 +1,65 @@
+// The two shapes of a JSON-RPC response.
+
+import json.writer.*
+
+/// JSON-RPC's errors, and the one the language server protocol adds.
+pub enum ErrorCode {
+    ParseError
+    InvalidRequest
+    MethodNotFound
+    ServerNotInitialized
+    /// The request was understood and cannot be carried out, such as a
+    /// rename that would change what a name means.
+    RequestFailed
+}
+
+pub fun ErrorCode.number(): int64 {
+    return when (self) {
+        ParseError => -32700
+        InvalidRequest => -32600
+        MethodNotFound => -32601
+        ServerNotInitialized => -32002
+        RequestFailed => -32803
+    }
+}
+
+/// The reply to the request whose id is this JSON text; `result` is JSON
+/// text too.
+pub fun str.result_reply(result: str): String {
+    var writer = JsonWriter.object()
+    writer.field_string("jsonrpc", "2.0")
+    writer.field_raw("id", self)
+    writer.field_raw("result", result)
+    return writer.finish()
+}
+
+/// The error reply to the request whose id is this JSON text: `null` when
+/// the request's id could not be read.
+pub fun str.error_reply(code: ErrorCode, message: str): String {
+    var writer = JsonWriter.object()
+    writer.field_string("jsonrpc", "2.0")
+    writer.field_raw("id", self)
+    writer.key("error")
+    writer.begin_object()
+    writer.field_int64("code", code.number())
+    writer.field_string("message", message)
+    writer.end_object()
+    return writer.finish()
+}
+
+/// A notification: no id, and nothing comes back. `params` is JSON text.
+pub fun notification(method: str, params: str): String {
+    var writer = JsonWriter.object()
+    writer.field_string("jsonrpc", "2.0")
+    writer.field_string("method", method)
+    writer.field_raw("params", params)
+    return writer.finish()
+}
+
+/// A line in the editor's log; `kind` 1 is an error, 3 information.
+pub fun log_message(kind: int64, message: str): String {
+    var writer = JsonWriter.object()
+    writer.field_int64("type", kind)
+    writer.field_string("message", "komp-lsp: ${message}")
+    return notification("window/logMessage", writer.finish().as_str())
+}

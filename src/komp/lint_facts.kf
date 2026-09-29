@@ -1,0 +1,91 @@
+// `komp lint --list --format=json` read back: every group, and every lint
+// with its level and options.
+
+import alloc.list.*
+import json.reader.*
+import komp_lsp.protocol.strings_at
+import komp_lsp.protocol.value_at
+
+@derive(Clone)
+pub struct LintOption {
+    pub var key: String
+    pub var value: int64
+    pub var default_value: int64
+    pub var description: String
+}
+
+@derive(Clone)
+pub struct LintFact {
+    pub var name: String
+    pub var group: String
+    pub var level: String
+    pub var default_level: String
+    pub var description: String
+    pub var options: List<LintOption>
+}
+
+@derive(Clone)
+pub struct LintFacts {
+    pub val groups: List<String>
+    pub val lints: List<LintFact>
+}
+
+impl LintFacts {
+    /// `komp lint --list --format=json`.
+    pub static fun parse(text: str): LintFacts {
+        val groups = text.strings_at("groups")
+        var lints = List.new<LintFact>()
+        var reader = text.value_at("lints") ?: return LintFacts { groups: groups, lints: lints }
+        if !reader.begin_array() { return LintFacts { groups: groups, lints: lints } }
+        while reader.array_has_next() { lints.push(read_lint(&var reader)) }
+        return LintFacts { groups: groups, lints: lints }
+    }
+
+    pub fun lint_named(name: str): LintFact? {
+        while lint in &self.lints {
+            if lint.name.as_str() == name { return Option.Some(lint.clone()) }
+        }
+        return null
+    }
+}
+
+fun read_lint(reader: &var JsonReader): LintFact {
+    var lint = LintFact {
+        name: String.from(""), group: String.from(""), level: String.from(""), default_level: String.from(""),
+        description: String.from(""), options: List.new<LintOption>()
+    }
+    if !reader.begin_object() { return lint }
+    while reader.object_has_next() {
+        val key = reader.read_key()
+        when key.as_str() {
+            "name" => lint.name = reader.read_text()
+            "group" => lint.group = reader.read_text()
+            "level" => lint.level = reader.read_text()
+            "default" => lint.default_level = reader.read_text()
+            "description" => lint.description = reader.read_text()
+            "options" => {
+                if reader.begin_array() {
+                    while reader.array_has_next() { lint.options.push(read_option(reader)) }
+                }
+            }
+            _ => reader.skip_value()
+        }
+    }
+    return lint
+}
+
+fun read_option(reader: &var JsonReader): LintOption {
+    var option = LintOption { key: String.from(""), value: 0, default_value: 0, description: String.from("") }
+    if !reader.begin_object() { return option }
+    while reader.object_has_next() {
+        val key = reader.read_key()
+        when key.as_str() {
+            "key" => option.key = reader.read_text()
+            "value" => option.value = reader.read_int64()
+            "default" => option.default_value = reader.read_int64()
+            "description" => option.description = reader.read_text()
+            _ => reader.skip_value()
+        }
+    }
+    return option
+}

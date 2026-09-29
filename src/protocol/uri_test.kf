@@ -1,0 +1,27 @@
+import core.assert.assert_eq
+
+@test
+fun a_file_uri_becomes_its_path(): void {
+    assert_eq("file:///home/me/app/src/main.kf".file_path() ?: "", "/home/me/app/src/main.kf", "plain")
+}
+
+@test
+fun percent_escapes_are_decoded(): void {
+    assert_eq("file:///home/me/my%20app/a.kf".file_path() ?: "", "/home/me/my app/a.kf", "a space")
+}
+
+@test
+fun another_scheme_is_no_path(): void {
+    assert_eq("untitled:Untitled-1".file_path().is_none(), true, "not a file")
+}
+
+@test
+fun a_path_with_a_space_is_escaped(): void {
+    assert_eq("/home/me/my app/a.kf".file_uri().as_str(), "file:///home/me/my%20app/a.kf", "encoded")
+}
+
+@test
+fun a_path_survives_the_round_trip(): void {
+    val path = "/tmp/ü#1/x.kf"
+    assert_eq(path.as_str().file_uri().as_str().file_path() ?: "", path, "decode undoes encode")
+}

@@ -1,4 +1,5 @@
 import core.display.print
+import komp_lsp.protocol.*
 import std.env.env_var
 import std.poll.Poll
 import std.reader.Reader
@@ -33,5 +34,5 @@ fun main(): int32 {
 }
 
 fun send_all(messages: &List<String>): void {
-    while message in &messages { print(framed(message.as_str()).as_str()) }
+    while message in &messages { print(message.as_str().framed().as_str()) }
 }

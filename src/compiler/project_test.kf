@@ -1,0 +1,83 @@
+import core.assert.assert_eq
+
+fun sample(): Project {
+    val text = String.from("{\"schema\":1,\"kflatc\":\"/k/kflatc\",\"target_dir\":\"/w/target/kflat\",\"crates\":[") +
+        "{\"name\":\"core\",\"root\":\"/k/libs/core\",\"member\":false,\"deps\":[],\"loads\":[],\"lints\":[]}," +
+        "{\"name\":\"app\",\"root\":\"/w/app\",\"member\":true,\"loads\":[\"core\",\"alloc\"]," +
+        "\"lints\":[{\"name\":\"dead_code\",\"level\":\"allow\"}]," +
+        "\"lint_options\":[{\"name\":\"too_many_parameters\",\"key\":\"max\",\"value\":\"5\"}]}," +
+        "{\"name\":\"inner\",\"root\":\"/w/app/inner\",\"member\":true,\"loads\":[],\"lints\":[]}]}"
+    return Project.parse(text.as_str()) ?: Project { kflatc: "", target_dir: "", crates: List.new<CrateEntry>() }
+}
+
+fun empty_entry(): CrateEntry {
+    return CrateEntry {
+        name: "", root: "", member: false, loads: List.new<String>(), lints: List.new<String>(),
+        lint_options: List.new<String>()
+    }
+}
+
+@test
+fun metadata_names_the_compiler_and_target(): void {
+    val project = sample()
+    assert_eq(project.kflatc.as_str() == "/k/kflatc" && project.target_dir.as_str() == "/w/target/kflat", true, "both")
+}
+
+@test
+fun a_file_belongs_to_the_member_whose_root_holds_it(): void {
+    assert_eq(sample().crate_for("/w/app/src/main.kf")?.name ?: "", "app", "app")
+}
+
+@test
+fun the_deepest_root_wins(): void {
+    assert_eq(sample().crate_for("/w/app/inner/src/lib.kf")?.name ?: "", "inner", "nested member")
+}
+
+@test
+fun a_file_in_no_member_has_no_crate(): void {
+    assert_eq(sample().crate_for("/k/libs/core/src/lib.kf").is_none(), true, "core is not a member")
+}
+
+@test
+fun a_root_is_not_a_prefix_of_its_sibling(): void {
+    assert_eq(sample().crate_for("/w/application/src/a.kf").is_none(), true, "/w/app is not /w/application")
+}
+
+@test
+fun check_params_carry_the_crate(): void {
+    val project = sample()
+    val app = project.crate_named("app") ?: empty_entry()
+    val expected = String.from("{\"target_dir\":\"/w/target/kflat\",\"crate\":{\"name\":\"app\",\"root\":\"/w/app\",") +
+        "\"loads\":[\"core\",\"alloc\"],\"lints\":[\"dead_code=allow\"]," +
+        "\"lint_options\":[{\"name\":\"too_many_parameters\",\"key\":\"max\",\"value\":\"5\"}]}}"
+    assert_eq(project.check_params(&app).as_str(), expected.as_str(), "the metadata row")
+}
+
+@test
+fun typed_crates_list_the_loads_then_the_crate(): void {
+    val project = sample()
+    val app = project.crate_named("app") ?: empty_entry()
+    // `alloc` is not in the sample's crates, so it is passed over.
+    val expected = "[{\"name\":\"core\",\"root\":\"/k/libs/core\"},{\"name\":\"app\",\"root\":\"/w/app\"}]"
+    assert_eq(project.typed_crates(&app).as_str(), expected, "dependencies first")
+}
+
+@test
+fun lint_levels_read_as_rows_from_metadata_objects(): void {
+    val app = sample().crate_named("app") ?: empty_entry()
+    assert_eq(app.lints[0].as_str(), "dead_code=allow", "the row serve applies")
+}
+
+@test
+fun lint_options_read_as_rows(): void {
+    val app = sample().crate_named("app") ?: empty_entry()
+    assert_eq(app.lint_options[0].as_str(), "too_many_parameters.max=5", "name.key=value")
+}
+
+@test
+fun lint_levels_may_still_be_strings(): void {
+    val text = """{"kflatc":"/k","target_dir":"/t","crates":[{"name":"a","root":"/a","member":true,
+"loads":[],"lints":["dead_code=deny"]}]}"""
+    val project = Project.parse(text) ?: return
+    assert_eq(project.crates[0].lints[0].as_str(), "dead_code=deny", "the older form")
+}
