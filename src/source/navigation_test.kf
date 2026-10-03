@@ -35,3 +35,18 @@ fun references_can_lead_with_the_declaration(): void {
     val found = Answer.of(references_answer().as_str()).references(true, &texts)
     assert_eq(found.as_str().starts_with("[{\"uri\":\"file:///w/a.kf\""), true, "declaration first")
 }
+
+@test
+fun implementations_are_locations(): void {
+    val texts = FixedText { text: String.from("impl Loud for Point"), utf8: true }
+    val answer = "{\"id\":1,\"result\":{\"implementations\":[{\"file\":\"/w/a.kf\",\"byte_start\":14,\"byte_end\":19}]}}"
+    val found = Answer.of(answer).implementations(&texts)
+    assert_eq(found.as_str().contains("\"character\":14"), true, "each impl, where it is")
+}
+
+@test
+fun an_answer_without_implementations_is_empty(): void {
+    val texts = FixedText { text: String.from(""), utf8: true }
+    val answer = "{\"id\":1,\"error\":{\"code\":\"unknown_method\",\"message\":\"x\"}}"
+    assert_eq(Answer.of(answer).implementations(&texts).as_str(), "[]", "an older compiler answers nothing")
+}

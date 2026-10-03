@@ -36,6 +36,7 @@ impl SourceService {
                 val with_declaration = body.bool_at("params.context.includeDeclaration") ?: false
                 self.ask_at("references", body, path, &view, messages).references(with_declaration, &files)
             }
+            "textDocument/implementation" => self.ask_at("implementations", body, path, &view, messages).implementations(&files)
             "textDocument/signatureHelp" => self.ask_at("signature", body, path, &view, messages).signature_help()
             "textDocument/completion" => self.ask_at("completion", body, path, &view, messages).completion()
             "textDocument/inlayHint" => {
