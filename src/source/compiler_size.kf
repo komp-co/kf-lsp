@@ -1,0 +1,57 @@
+// `kflatc serve` keeps some of what each typing allocates. Past a limit it is
+// started afresh and the open files staged with it again.
+
+import alloc.list.*
+import komp_lsp.compiler.*
+import komp_lsp.protocol.*
+import std.fs.read_to_string
+
+/// The resident size, in KiB, past which the compiler is restarted.
+fun compiler_size_limit_kb(): uint64 {
+    return 1024 * 1024
+}
+
+/// `VmRSS` of a `/proc/<pid>/status` text, in KiB; 0 when it names none.
+fun resident_kb_in(status: str): uint64 {
+    val at = status.index_of("VmRSS:") ?: return 0
+    var i = at + 6
+    var kb: uint64 = 0
+    while i < status.byte_len() {
+        val c = status.byte_at(i)
+        if c >= 48 && c <= 57 {
+            kb = kb * 10 + (c - 48) as uint64
+        } else if c != 32 && c != 9 {
+            break
+        }
+        i = i + 1
+    }
+    return kb
+}
+
+/// 0 where there is no `/proc` to ask.
+fun resident_kb(pid: int32): uint64 {
+    return when (read_to_string("/proc/${pid}/status")) {
+        Ok(text) => resident_kb_in(text.as_str())
+        Err(_error) => 0
+    }
+}
+
+/// Restarts the compiler once it has grown past the limit.
+mutating fun SourceService.restart_compiler_if_large(documents: &Documents, messages: &var List<String>): void {
+    if self.compiler.is_empty() { return }
+    val kb = resident_kb(self.compiler[0].id())
+    if kb < compiler_size_limit_kb() { return }
+    val project = self.project?.clone() ?: return
+    self.compiler = List.new<Compiler>()
+    val failed = Compiler.start(project.kflatc.as_str(), &var self.compiler)
+    if !failed.is_empty() {
+        messages.push(log_message(1, failed.as_str()))
+        return
+    }
+    messages.push(log_message(3, "kflatc serve had grown to ${kb / 1024} MiB; started it afresh"))
+    while open in &documents.paths() {
+        if !open.as_str().ends_with(".kf") { continue }
+        val text = documents.text_of(open.as_str())
+        self.send_to_compiler("stage", staged_params(open.as_str(), Option.Some(text)).as_str(), messages)
+    }
+}
