@@ -19,3 +19,10 @@ fun an_unknown_role_is_left_out(): void {
     val tokens = Answer.of(answer).semantic_tokens(&TextView.of("a", true))
     assert_eq(tokens.as_str(), "{\"data\":[]}", "the legend has no macro")
 }
+
+@test
+fun a_variant_is_an_enum_member(): void {
+    val answer = "{\"id\":1,\"result\":{\"tokens\":[{\"byte_start\":0,\"byte_end\":3,\"type\":\"enum_member\"}]}}"
+    val tokens = Answer.of(answer).semantic_tokens(&TextView.of("Red", true))
+    assert_eq(tokens.as_str(), "{\"data\":[0,0,3,5,0]}", "the legend's enumMember")
+}

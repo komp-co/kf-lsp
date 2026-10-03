@@ -36,6 +36,11 @@ impl Compiler {
         return "${kflatc} serve refused: ${hello}"
     }
 
+    /// The process's id.
+    pub fun id(): int32 {
+        return self.child.id()
+    }
+
     /// The answer line to `method`; `null` once the compiler has gone.
     /// `params` is JSON text, or "" for none.
     pub mutating fun request(method: str, params: str): String? {

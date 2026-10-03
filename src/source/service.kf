@@ -122,6 +122,7 @@ impl SourceService {
     pub mutating fun run_due_checks(documents: &Documents): List<String> {
         var messages = self.run_due_rebuild(documents)
         if !self.check_is_due() { return messages }
+        self.restart_compiler_if_large(documents, &var messages)
         val dirty = self.dirty.clone()
         self.dirty = List.new<String>()
         val project = self.project?.clone() ?: return messages

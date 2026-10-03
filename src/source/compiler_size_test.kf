@@ -1,0 +1,12 @@
+import core.assert.assert_eq
+
+@test
+fun the_resident_size_is_read_from_vm_rss(): void {
+    val status = "Name:\tkflatc\nVmPeak:\t  900 kB\nVmRSS:\t  412345 kB\nVmData:\t 1 kB\n"
+    assert_eq(resident_kb_in(status), 412345, "VmRSS, not VmPeak")
+}
+
+@test
+fun a_status_without_vm_rss_reads_as_zero(): void {
+    assert_eq(resident_kb_in("Name:\tkflatc\n"), 0, "nothing to restart on")
+}
