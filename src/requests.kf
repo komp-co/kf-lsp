@@ -16,6 +16,7 @@ mutating fun Server.request(id: str, method: str, body: str, messages: &var List
         "textDocument/hover" => "null"
         "textDocument/definition" => "null"
         "textDocument/references" => "[]"
+        "textDocument/implementation" => "[]"
         "textDocument/signatureHelp" => "null"
         "textDocument/completion" => "[]"
         "textDocument/inlayHint" => "[]"

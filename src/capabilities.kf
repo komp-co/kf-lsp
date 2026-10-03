@@ -47,6 +47,7 @@ fun capabilities(utf8: bool): String {
     writer.field_bool("hoverProvider", true)
     writer.field_bool("definitionProvider", true)
     writer.field_bool("referencesProvider", true)
+    writer.field_bool("implementationProvider", true)
     writer.field_raw("signatureHelpProvider", "{\"triggerCharacters\":[\"(\",\",\"]}")
     writer.field_raw("completionProvider", "{\"triggerCharacters\":[\".\"]}")
     writer.field_bool("inlayHintProvider", true)

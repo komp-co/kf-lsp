@@ -1,5 +1,6 @@
-// The compiler's `references` answer as LSP locations: where a name is
-// declared, and where it is used.
+// The compiler's `references` and `implementations` answers as LSP
+// locations: where a name is declared, where it is used, and what implements
+// it.
 
 import alloc.list.*
 import json.reader.*
@@ -38,6 +39,16 @@ pub fun Answer.references(with_declaration: bool, files: &dyn FileText): String 
     return writer.finish()
 }
 
+/// `textDocument/implementation`'s result: each impl of a trait or a type,
+/// each extension of a type, or each impl's version of a trait method.
+pub fun Answer.implementations(files: &dyn FileText): String {
+    var writer = JsonWriter.new()
+    writer.begin_array()
+    writer.write_spans(self, "result.implementations", files)
+    writer.end_array()
+    return writer.finish()
+}
+
 /// The span `path` leads to in `answer`.
 fun Answer.span_at(path: str): FileSpan? {
     var reader = self.at(path) ?: return null
@@ -45,7 +56,12 @@ fun Answer.span_at(path: str): FileSpan? {
 }
 
 mutating fun JsonWriter.write_uses(answer: &Answer, files: &dyn FileText): void {
-    var reader = answer.at("result.references") ?: return
+    self.write_spans(answer, "result.references", files)
+}
+
+/// Each span of the array at `path`, as a location.
+mutating fun JsonWriter.write_spans(answer: &Answer, path: str, files: &dyn FileText): void {
+    var reader = answer.at(path) ?: return
     if !reader.begin_array() { return }
     while reader.array_has_next() {
         val use = read_file_span(&var reader) ?: continue
