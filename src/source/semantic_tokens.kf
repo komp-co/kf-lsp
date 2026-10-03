@@ -7,7 +7,7 @@ import komp_lsp.protocol.*
 /// The legend's token types, as a JSON array: a token's type is its index
 /// here, as `token_type` gives it.
 pub fun semantic_token_legend(): String {
-    return String.from("[\"variable\",\"function\",\"method\",\"property\",\"type\"]")
+    return String.from("[\"variable\",\"function\",\"method\",\"property\",\"type\",\"enumMember\"]")
 }
 
 /// `textDocument/semanticTokens/full`'s result. Each token is five numbers:
@@ -71,6 +71,7 @@ fun token_type(name: str): int64 {
         "method" => 2
         "field" => 3
         "type" => 4
+        "enum_member" => 5
         _ => -1
     }
 }
